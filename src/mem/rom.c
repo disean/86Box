@@ -443,14 +443,15 @@ bios_add(void)
     }
 
     if (biosmask > 0x1ffff) {
+        // TODO: Figure out ROM region connect control
         /* 256k+ BIOS'es only have low mappings at E0000-FFFFF. */
-        mem_mapping_add(&bios_mapping, 0xe0000, 0x20000,
-                        bios_read, bios_readw, bios_readl,
-                        NULL, NULL, NULL,
-                        &rom[biosmask + 1 - 0x20000], MEM_MAPPING_EXTERNAL | MEM_MAPPING_ROM | MEM_MAPPING_ROMCS, 0);
+        /* mem_mapping_add(&bios_mapping, 0xe0000, 0x20000, */
+                        /* bios_read, bios_readw, bios_readl, */
+                        /* NULL, NULL, NULL, */
+                        /* &rom[biosmask + 1 - 0x20000], MEM_MAPPING_EXTERNAL | MEM_MAPPING_ROM | MEM_MAPPING_ROMCS, 0); */
 
-        mem_set_mem_state_both(0x0e0000, 0x20000,
-                               MEM_READ_ROMCS | MEM_WRITE_ROMCS);
+        /* mem_set_mem_state_both(0x0e0000, 0x20000, */
+                               /* MEM_READ_ROMCS | MEM_WRITE_ROMCS); */
     } else {
         mem_mapping_add(&bios_mapping, biosaddr, biosmask + 1,
                         bios_read, bios_readw, bios_readl,

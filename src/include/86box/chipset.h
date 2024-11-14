@@ -155,6 +155,9 @@ extern const device_t stpc_atlas_device;
 extern const device_t stpc_serial_device;
 extern const device_t stpc_lpt_device;
 
+/* SGI */
+extern const device_t cobalt_chipset_device;
+
 /* UMC */
 extern const device_t umc_8886f_device;
 extern const device_t umc_8886af_device;

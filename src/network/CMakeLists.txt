@@ -27,6 +27,7 @@ list(APPEND net_sources
     net_wd8003.c
     net_plip.c
     net_event.c
+    net_i82557.c
     net_null.c
     net_eeprom_nmc93cxx.c
     net_tulip.c

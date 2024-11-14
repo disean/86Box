@@ -2896,7 +2896,9 @@ mem_reset(void)
     memset(_mem_state, 0x00, sizeof(_mem_state));
 
     /* Set the low RAM space as internal. */
-    mem_init_ram_mapping(&ram_low_mapping, 0x000000, (mem_size > 640) ? 0xa0000 : mem_size * 1024);
+    /* mem_init_ram_mapping(&ram_low_mapping, 0x000000, (mem_size > 640) ? 0xa0000 : mem_size * 1024); */
+    // FIXME: HACK
+    mem_init_ram_mapping(&ram_low_mapping, 0x000000, mem_size * 1024);
 
     if (mem_size > 1024) {
         if (cpu_16bitbus && !is6117 && mem_size > 16256)

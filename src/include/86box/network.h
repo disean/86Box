@@ -235,6 +235,9 @@ extern const lpt_device_t lpt_plip_device;
 #endif
 extern const device_t     plip_device;
 
+/* Intel */
+extern const device_t intel_82557_device;
+
 /* Realtek RTL8139C+ */
 extern const device_t rtl8139c_plus_device;
 

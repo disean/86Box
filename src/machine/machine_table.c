@@ -4270,9 +4270,9 @@ const machine_t machines[] = {
             .max_voltage = 0,
             .min_multi = 0,
             .max_multi = 0,
-            
+
         },
-        .bus_flags = MACHINE_PS2, 
+        .bus_flags = MACHINE_PS2,
         .flags = MACHINE_IDE | MACHINE_VIDEO , /* Machine has internal OTI 077 Video card*/
         .ram = {
             .min = 2048,
@@ -14953,6 +14953,45 @@ const machine_t machines[] = {
             .step = 1024
         },
         .nvrmask = 255,
+        .kbc_device = NULL,
+        .kbc_p1 = 0xff,
+        .gpio = 0xffffffff,
+        .gpio_acpi = 0xffffffff,
+        .device = NULL,
+        .fdc_device = NULL,
+        .sio_device = NULL,
+        .vid_device = NULL,
+        .snd_device = NULL,
+        .net_device = NULL
+    },
+    {
+        .name = "[Cobalt] SGI Visual Workstation 320",
+        .internal_name = "sgi320",
+        .type = MACHINE_TYPE_SLOT1,
+        .chipset = MACHINE_CHIPSET_INTEL_440BX,// TODO
+        .init = machine_at_sgivw320_init,
+        .p1_handler = NULL,
+        .gpio_handler = NULL,
+        .available_flag = MACHINE_AVAILABLE,
+        .gpio_acpi_handler = NULL,
+        .cpu = {
+            .package = CPU_PKG_SLOT1,
+            .block = CPU_BLOCK_NONE,
+            .min_bus = 66666667,
+            .max_bus = 100000000, /* FSB fixed at 100 MHz */
+            .min_voltage = 1800,
+            .max_voltage = 3500,
+            .min_multi = 1.5,
+            .max_multi = 8
+        },
+        .bus_flags = MACHINE_BUS_PCI, // ~MACHINE_AT,
+        .flags = MACHINE_PIIX4 | MACHINE_VIDEO_FIXED | MACHINE_NIC | MACHINE_SOUND,
+        .ram = {
+            .min = 128 * 1024,
+            .max = 1024 * 1024, /* Max config: DIMM modules 6 x 2 = 512 MB x 2 (A and B banks) */
+            .step = 128 * 1024 /* 128, 256, 384, 512, 640, 748, and 1024 (1 GB) */
+        },
+        .nvrmask = 511,
         .kbc_device = NULL,
         .kbc_p1 = 0xff,
         .gpio = 0xffffffff,

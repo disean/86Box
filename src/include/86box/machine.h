@@ -144,6 +144,7 @@
 
 #define IS_ARCH(m, a) ((machines[m].bus_flags & (a)) ? 1 : 0)
 #define IS_AT(m)      (((machines[m].bus_flags & (MACHINE_BUS_ISA16 | MACHINE_BUS_EISA | MACHINE_BUS_VLB | MACHINE_BUS_MCA | MACHINE_BUS_PCI | MACHINE_BUS_PCMCIA | MACHINE_BUS_AGP | MACHINE_BUS_AC97)) && !(machines[m].bus_flags & MACHINE_PC98)) ? 1 : 0)
+#define IS_IVC()      (strstr(machine_get_internal_name(), "sgi") != NULL)
 
 #define CPU_BLOCK(...) \
     (const uint8_t[])  \
@@ -436,7 +437,7 @@ extern int machine_at_ibmxt286_init(const machine_t *);
 
 extern int machine_at_siemens_init(const machine_t *); // Siemens PCD-2L. N82330 discrete machine. It segfaults in some places
 
-extern int machine_at_wellamerastar_init(const machine_t *); // Wells American A*Star with custom award BIOS 
+extern int machine_at_wellamerastar_init(const machine_t *); // Wells American A*Star with custom award BIOS
 #ifdef USE_OPEN_AT
 extern int machine_at_openat_init(const machine_t *);
 #endif /* USE_OPEN_AT */
@@ -819,6 +820,9 @@ extern int machine_at_ms6168_init(const machine_t *);
 
 extern int machine_at_p6f99_init(const machine_t *);
 extern int machine_at_m747_init(const machine_t *);
+
+/* m_at_sgivw.c */
+extern int machine_at_sgivw320_init(const machine_t *);
 
 /* m_at_slot2.c */
 extern int machine_at_6gxu_init(const machine_t *);

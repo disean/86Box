@@ -71,6 +71,18 @@ add_library(chipset OBJECT
     sis_5572_usb.c
     sis_5595_pmu.c
     sis_55xx.c
+    sgivw/arsenic.c
+    sgivw/arsenic_reset.c
+    sgivw/cobalt.c
+    sgivw/cobalt_cpu.c
+    sgivw/cobalt_gfx.c
+    sgivw/cobalt_ioapic.c
+    sgivw/cobalt_mem.c
+    sgivw/core.c
+    sgivw/lithium.c
+    sgivw/lithium_1394.c
+    sgivw/lithium_dma.c
+    sgivw/lithium_hostbridge.c
     via_vt82c49x.c
     via_vt82c505.c
     gc100.c

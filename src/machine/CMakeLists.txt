@@ -53,6 +53,7 @@ add_library(mch OBJECT
     m_at_slot2.c
     m_at_socket370.c
     m_at_misc.c
+    m_at_sgivw.c
 )
 
 if(AN430TX)

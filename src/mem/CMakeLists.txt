@@ -19,6 +19,7 @@ add_library(mem OBJECT
     catalyst_flash.c
     i2c_eeprom.c
     intel_flash.c
+    m29f400_flash.c
     mem.c
     mmu_2386.c
     rom.c
