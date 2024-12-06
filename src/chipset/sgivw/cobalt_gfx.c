@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <assert.h>
 #define HAVE_STDARG_H
 #include <86box/86box.h>
 #include "cpu.h"
@@ -99,6 +100,32 @@ cobalt_gfx_mmio_read32(uint32_t addr, void* priv)
     return ret;
 }
 
+static void
+cobalt_gfx_int_status_mmio_write32(uint32_t addr, uint32_t val, void* priv)
+{
+    co_t *dev = priv;
+
+    assert((addr & 0x3) == 0);
+
+    cobalt_gfx_log("CO: GFX [W32] [%X] <-- %X\n", addr, val);
+
+    dev->gfx.interrupt_status = val & 0x0000000F;
+}
+
+static uint32_t
+cobalt_gfx_int_status_mmio_read32(uint32_t addr, void* priv)
+{
+    co_t *dev = priv;
+    uint32_t ret;
+
+    assert((addr & 0x3) == 0);
+
+    ret = dev->gfx.interrupt_status;
+
+    cobalt_gfx_log("CO: GFX [R32] [%X] --> %X\n", addr, ret);
+    return ret;
+}
+
 void
 cobalt_gfx_init(co_t *dev)
 {
@@ -115,15 +142,15 @@ cobalt_gfx_init(co_t *dev)
                     MEM_MAPPING_EXTERNAL,
                     dev);
 
-    mem_mapping_add(&dev->gfx_mapping_ca,
-                    0xCA000000,
-                    0x02000000, // TODO Verify
-                    cobalt_gfx_mmio_read8,
-                    cobalt_gfx_mmio_read16,
-                    cobalt_gfx_mmio_read32,
-                    cobalt_gfx_mmio_write8,
-                    cobalt_gfx_mmio_write16,
-                    cobalt_gfx_mmio_write32,
+    mem_mapping_add(&dev->gfx_mapping_interrupt_status,
+                    VW_CO_GFX_INT_STATUS_IO_BASE,
+                    VW_CO_GFX_INT_STATUS_IO_SIZE,
+                    NULL,
+                    NULL,
+                    cobalt_gfx_int_status_mmio_read32,
+                    NULL,
+                    NULL,
+                    cobalt_gfx_int_status_mmio_write32,
                     NULL,
                     MEM_MAPPING_EXTERNAL,
                     dev);

@@ -279,6 +279,7 @@ enum {
     MACHINE_CHIPSET_VLSI_VL82C486,
     MACHINE_CHIPSET_WD76C10,
     MACHINE_CHIPSET_ZYMOS_POACH,
+    MACHINE_CHIPSET_COBALT,
     MACHINE_CHIPSET_MAX
 };
 
@@ -823,6 +824,7 @@ extern int machine_at_m747_init(const machine_t *);
 
 /* m_at_sgivw.c */
 extern int machine_at_sgivw320_init(const machine_t *);
+extern int machine_at_sgivw540_init(const machine_t *);
 
 /* m_at_slot2.c */
 extern int machine_at_6gxu_init(const machine_t *);

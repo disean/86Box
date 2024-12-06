@@ -29,7 +29,7 @@
 
 #define CMD_CHIP_ERASE_CONFIRM       0x10
 #define CMD_BLOCK_ERASE_CONFIRM      0x30
-#define CMD_ERASE_RESUME             0x30
+#define CMD_ERASE_RESUME             CMD_BLOCK_ERASE_CONFIRM
 #define CMD_SETUP_ERASE              0x80
 #define CMD_AUTO_SELECT              0x90
 #define CMD_PROGRAM                  0xA0
@@ -46,12 +46,10 @@
 #define FLASH_BLOCK_PROTECTED        0x01
 
 /* A0-A14 */
-/* #define FLASH_CODED_CYCLE_ADDRESS_MASK   0x7FFF */
-#define FLASH_CODED_CYCLE_ADDRESS_MASK   0xFFFF // todo
+#define FLASH_CODED_CYCLE_ADDRESS_MASK   0x7FFF
 
 /* A12-A17 */
-/* #define FLASH_BLOCK_ERASE_ADDRESS_MASK   0x3F000 */
-#define FLASH_BLOCK_ERASE_ADDRESS_MASK   0xFFFFFFFF // todo
+#define FLASH_BLOCK_ERASE_ADDRESS_MASK   0x3F000
 
 /* A0-A1 */
 #define FLASH_AUTOSELECT_ADDRESS_MASK           0x3
@@ -112,7 +110,7 @@ typedef struct flash_t
 {
     DeviceMode mode;
 
-    bool in_8_bit_mode;
+    bool in_16_bit_mode;
 
     uint8_t bus_cycle;
     uint8_t cmd_cycle;
@@ -120,18 +118,18 @@ typedef struct flash_t
     uint8_t manufacturer_id;
     uint16_t model_id;
 
-    uint32_t addr_mask;
-    uint32_t select_addr_shift;
-    uint32_t addr_5555_phys;
+    uint32_t addr_decode_mask;
+    uint32_t addr_select_shift;
     uint32_t addr_AAAA_phys;
+    uint32_t addr_5555_phys;
     uint32_t blocks_to_erase_bitmap;
-
-    pc_timer_t erase_accept_timeout_timer;
-    pc_timer_t cmd_complete_timer;
 
     flash_block_t block[FLASH_MAX_BLOCKS];
 
     uint8_t array[M29F400T_FLASH_SIZE];
+
+    pc_timer_t erase_accept_timeout_timer;
+    pc_timer_t cmd_complete_timer;
 
     mem_mapping_t flash_mapping_low;
     mem_mapping_t flash_mapping_high;
@@ -236,17 +234,13 @@ m29f400_cmd_complete_timer_callback(void *priv)
     m29f400_reset_cmd(dev);
 }
 
-static void
-m29f400_erase_begin_timer_callback(void *priv)
+static bool
+m29f400_erase_blocks(flash_t *dev, int pattern)
 {
-    flash_t *dev = priv;
-    double period;
     bool was_erased = false;
+    uint32_t i;
 
-    /* This status bit is the same for Block Erase and Chip Erase */
-    dev->status_reg |= STATUS_ERASE_TIMEOUT_EXPIRED;
-
-    for (uint32_t i = 0; i < FLASH_MAX_BLOCKS; ++i) {
+    for (i = 0; i < FLASH_MAX_BLOCKS; ++i) {
         flash_block_t *block = &dev->block[i];
         void *block_start;
         size_t block_length;
@@ -268,10 +262,25 @@ m29f400_erase_begin_timer_callback(void *priv)
         block_start = dev->array + block->start_addr;
         block_length = (block->end_addr - block->start_addr) + 1;
 
-        /* Finally, erase the block (fill with 0xFF) */
-        memset(block_start, 0xFF, block_length);
+        memset(block_start, pattern, block_length);
         was_erased = true;
     }
+
+    return was_erased;
+}
+
+static void
+m29f400_erase_begin_timer_callback(void *priv)
+{
+    flash_t *dev = priv;
+    double period;
+    bool was_erased = false;
+
+    /* This status bit is the same for Block Erase and Chip Erase */
+    dev->status_reg |= STATUS_ERASE_TIMEOUT_EXPIRED;
+
+    /* Finally, erase the blocks (fill with 0xFF) */
+    was_erased = m29f400_erase_blocks(dev, 0xFF);
 
     /*
      * If all of the selected blocks are protected,
@@ -285,6 +294,24 @@ m29f400_erase_begin_timer_callback(void *priv)
         period = FLASH_CHIP_ERASE_TIME;
     }
     timer_on_auto(&dev->cmd_complete_timer, period);
+}
+
+static void
+m29f400_check_for_erasure_abort(flash_t *dev)
+{
+    /*
+     * Erase Suspend: A Read/Reset command will definitively abort erasure
+     * and result in invalid data in the blocks being erased.
+     */
+    if (dev->blocks_to_erase_bitmap != 0) {
+        m29f400_log("FLASH: Block Erase abort %08lX\n", dev->blocks_to_erase_bitmap);
+
+        /*
+         * Simulate the effect of erasure being interrupted.
+         * The software, therefore, has to check the change of memory array values again.
+         */
+        m29f400_erase_blocks(dev, 0xCC);
+    }
 }
 
 static uint8_t
@@ -332,6 +359,7 @@ m29f400_accept_cmd(flash_t *dev, uint32_t addr, uint16_t val)
     /* Single cycle commands (write to any address inside the device) */
     switch (val) {
         case CMD_READ_ARRAY: {
+            m29f400_check_for_erasure_abort(dev);
             m29f400_reset_cmd(dev);
             return;
         }
@@ -389,7 +417,7 @@ m29f400_accept_cmd(flash_t *dev, uint32_t addr, uint16_t val)
                 goto ProgramDone;
             }
 
-            if (!dev->in_8_bit_mode) {
+            if (dev->in_16_bit_mode) {
                 if (addr & (sizeof(uint16_t) - 1)) {
                     m29f400_log("FLASH: Program error - the address %lX is unaligned\n", addr);
 
@@ -421,7 +449,7 @@ m29f400_accept_cmd(flash_t *dev, uint32_t addr, uint16_t val)
             }
 
             /* Finally, program the value */
-            if (!dev->in_8_bit_mode) {
+            if (dev->in_16_bit_mode) {
                 dev->array[addr] = val & 0xFF;
                 dev->array[addr + 1] = val >> 8;
             } else {
@@ -438,7 +466,7 @@ ProgramDone:
             /* We shouldn't get here if the operation has already started */
             assert(!(dev->status_reg & STATUS_ERASE_TIMEOUT_EXPIRED));
 
-            addr &= FLASH_BLOCK_ERASE_ADDRESS_MASK;
+            addr &= FLASH_BLOCK_ERASE_ADDRESS_MASK << dev->addr_select_shift;
             block = m29f400_address_to_block(dev, addr);
 
             m29f400_log("FLASH: Queued block #%lu %lX-%lX for erase\n",
@@ -483,12 +511,12 @@ m29f400_interpret_cmd_sequence(flash_t *dev, uint32_t addr, uint16_t val)
     };
     uint8_t cycle_state;
 
-    addr &= FLASH_CODED_CYCLE_ADDRESS_MASK;
+    addr &= FLASH_CODED_CYCLE_ADDRESS_MASK << dev->addr_select_shift;
 
     cycle_state = cmd_seq_next_state[dev->bus_cycle][dev->cmd_cycle];
     switch (cycle_state) {
         case CYCLE_CHECK_AA: {
-            if (val == 0xAA && addr == dev->addr_5555_phys) {
+            if (val == 0xAA && addr == dev->addr_AAAA_phys) {
                 dev->bus_cycle++;
             } else {
                 m29f400_reset_cmd_sequence(dev);
@@ -497,7 +525,7 @@ m29f400_interpret_cmd_sequence(flash_t *dev, uint32_t addr, uint16_t val)
         }
 
         case CYCLE_CHECK_55: {
-            if (val == 0x55 && addr == dev->addr_AAAA_phys) {
+            if (val == 0x55 && addr == dev->addr_5555_phys) {
                 dev->bus_cycle++;
             } else {
                 m29f400_reset_cmd_sequence(dev);
@@ -506,7 +534,7 @@ m29f400_interpret_cmd_sequence(flash_t *dev, uint32_t addr, uint16_t val)
         }
 
         case CYCLE_CHECK_FIRST_CMD: {
-            if (addr != dev->addr_5555_phys) {
+            if (addr != dev->addr_AAAA_phys) {
                 m29f400_reset_cmd_sequence(dev);
                 break;
             }
@@ -549,7 +577,7 @@ m29f400_interpret_cmd_sequence(flash_t *dev, uint32_t addr, uint16_t val)
                 }
 
                 case CMD_CHIP_ERASE_CONFIRM: {
-                    if (addr == dev->addr_5555_phys) {
+                    if (addr == dev->addr_AAAA_phys) {
                         m29f400_set_mode(dev, M_CHIP_ERASE);
                     } else {
                         m29f400_reset_cmd_sequence(dev);
@@ -570,15 +598,13 @@ m29f400_interpret_cmd_sequence(flash_t *dev, uint32_t addr, uint16_t val)
     }
 }
 
-/* Commond write handler for 8- or 16-bit bus mode */
+/* Common write handler for 8- or 16-bit bus mode */
 static void
 m29f400_mmio_write(flash_t *dev, uint32_t addr, uint16_t val)
 {
-    addr &= dev->addr_mask;
+    addr &= dev->addr_decode_mask;
 
-    if (dev->mode != M_PROGRAM) {
     m29f400_log("FLASH: [W16] [%lX] <-- %X\n", addr, val);
-    }
 
     switch (dev->mode) {
         /* Ignore all commands while the chip is being programmed or erased */
@@ -617,21 +643,21 @@ m29f400_mmio_write(flash_t *dev, uint32_t addr, uint16_t val)
     m29f400_accept_cmd(dev, addr, val);
 }
 
-/* Commond read handler for 8- or 16-bit bus mode */
+/* Common read handler for 8- or 16-bit bus mode */
 static uint16_t
 m29f400_mmio_read(flash_t *dev, uint32_t addr)
 {
     flash_block_t *block;
     uint16_t ret;
 
-    addr &= dev->addr_mask;
+    addr &= dev->addr_decode_mask;
 
     block = m29f400_address_to_block(dev, addr);
 
     switch (dev->mode) {
         case M_AUTO_SELECT: {
             /* Note that it is possible to enter the Auto Select mode during Erase Suspend */
-            switch ((addr >> dev->select_addr_shift) & FLASH_AUTOSELECT_ADDRESS_MASK) {
+            switch ((addr >> dev->addr_select_shift) & FLASH_AUTOSELECT_ADDRESS_MASK) {
                 case FLASH_AUTOSELECT_ADDR_MANUFACTURER_ID:
                     ret = dev->manufacturer_id;
                     break;
@@ -654,15 +680,15 @@ m29f400_mmio_read(flash_t *dev, uint32_t addr)
                 ret = m29f400_status_register_read(dev, true);
             } else {
                 /* Read array data */
-                if (dev->in_8_bit_mode) {
-                    ret = dev->array[addr];
-                } else {
+                if (dev->in_16_bit_mode) {
                     if (addr < (M29F400T_FLASH_SIZE - 1)) {
                         ret = dev->array[addr];
                         ret |= dev->array[addr + 1] << 8;
                     } else {
                         ret = 0xFFFF;
                     }
+                } else {
+                    ret = dev->array[addr];
                 }
             }
             break;
@@ -700,11 +726,11 @@ m29f400_mmio_read16(uint32_t addr, void* priv)
     uint16_t ret;
 
     /* Split the read into two accesses when the device is in 8-bit bus mode */
-    if (dev->in_8_bit_mode) {
+    if (dev->in_16_bit_mode) {
         ret = m29f400_mmio_read(dev, addr);
-        ret |= ((uint16_t)m29f400_mmio_read(dev, addr)) << 16;
     } else {
         ret = m29f400_mmio_read(dev, addr);
+        ret |= ((uint16_t)m29f400_mmio_read(dev, addr)) << 16;
     }
 
     return ret;
@@ -716,11 +742,11 @@ m29f400_mmio_write16(uint32_t addr, uint16_t val, void* priv)
     flash_t *dev = priv;
 
     /* Split the write into two accesses when the device is in 8-bit bus mode */
-    if (dev->in_8_bit_mode) {
+    if (dev->in_16_bit_mode) {
+        m29f400_mmio_write(dev, addr, val);
+    } else {
         m29f400_mmio_write(dev, addr, val & 0xFF);
         m29f400_mmio_write(dev, addr + 1, val >> 8);
-    } else {
-        m29f400_mmio_write(dev, addr, val);
     }
 }
 
@@ -764,7 +790,46 @@ m29f400_finish_init(flash_t *dev)
         block->number = i;
     }
 
-    dev->addr_mask = M29F400T_FLASH_SIZE - 1;
+    dev->addr_decode_mask = M29F400T_FLASH_SIZE - 1;
+
+    /*
+     * For information about 8- or 16-bit bus mode mapping, see especially
+     * "AN202720 Connecting Cypress Flash Memory to a System Address Bus".
+     * The Cypress S29CD devices have a nearly identical design to M29F400.
+     *
+     * On SGI 320/540 systems, the flash memory is configured to operate in 16-bit bus mode.
+     * The address line A1 of the CPU is connected to A0 of the flash memory.
+     * This means, that the software can only use a x8 address range to access a word.
+     *
+     *    Standard 8-bit mode          Standard 16-bit mode            16-bit mode on SGI 320/540
+     *                                   for a 16-bit CPU
+     * Read manufacturer ID:
+     * *(uint8_t*)0x00              *(uint16_t*)0x00                *(uint16_t*)0x00
+     *
+     * Read device code:
+     * *(uint8_t*)0x02              *(uint16_t*)0x01                *(uint16_t*)0x02
+     *
+     * Read array byte 8 and 9:
+     * *(uint8_t*)0x08              *(uint16_t*)0x04                *(uint16_t*)0x08
+     * *(uint8_t*)0x09
+     *
+     * The command patterns:
+     * *(uint8_t*)0xAAAA = 0xAA     *(uint16_t*)0x5555 = 0x00AA     *(uint16_t*)0xAAAA = 0x00AA
+     * *(uint8_t*)0x5555 = 0x55     *(uint16_t*)0x2AAA = 0x0055     *(uint16_t*)0x5554 = 0x0055
+     *
+     * So we have two formulas to calculate the address:
+     * 0xAAAA >> 1 = 0x5555
+     * 0x5555 << 1 = 0xAAAA
+     * and
+     * 0x5555 >> 1 = 0x2AAA
+     * 0x2AAA << 1 = 0x5554
+     */
+    if (dev->in_16_bit_mode) {
+        dev->addr_select_shift = 1;
+
+        dev->addr_5555_phys = (dev->addr_5555_phys >> 1) << dev->addr_select_shift;
+        dev->addr_AAAA_phys = (dev->addr_AAAA_phys >> 1) << dev->addr_select_shift;
+    }
 }
 
 static void
@@ -842,33 +907,9 @@ m29f400_init(UNUSED(const device_t *info))
     dev->block[10].start_addr = 0x7C000;
     dev->block[10].end_addr   = 0x7FFFF;
 
-    /*
-     * For information about 8- or 16-bit bus mode mapping, see especially
-     * "AN202720 Connecting Cypress Flash Memory to a System Address Bus".
-     *
-     * On SGI 320/540 systems, the flash memory is configured to operate in 16-bit bus mode.
-     * The address line A1 of the CPU is connected to A0 of the flash memory.
-     * This means, that the software can only use a x8 address range to access a word.
-     *
-     *    Standard 8-bit mode          Standard 16-bit mode            16-bit mode on SGI 320/540
-     *
-     * The command patterns:
-     * *(uint8_t*)0xAAAA = 0xAA     *(uint16_t*)0x5555 = 0x00AA     *(uint16_t*)0xAAAA = 0x00AA
-     * *(uint8_t*)0x5555 = 0x55     *(uint16_t*)0x2AAA = 0x0055     *(uint16_t*)0x5554 = 0x0055
-     *
-     * Read manufacturer ID:
-     * *(uint8_t*)0x00              *(uint16_t*)0x00                *(uint16_t*)0x00
-     *
-     * Read device code:
-     * *(uint8_t*)0x02              *(uint16_t*)0x01                *(uint16_t*)0x02
-     *
-     * Read array byte 8 and 9:
-     * *(uint8_t*)0x08              *(uint16_t*)0x04                *(uint16_t*)0x08
-     * *(uint8_t*)0x09
-     */
-    dev->addr_5555_phys = 0xAAAA;
-    dev->addr_AAAA_phys = 0x5554;
-    dev->select_addr_shift = 1;
+    dev->addr_AAAA_phys = 0xAAAA;
+    dev->addr_5555_phys = 0x5555;
+    dev->in_16_bit_mode = true;
     dev->manufacturer_id = M29F400T_MANUFACTURER_ID;
     dev->model_id = M29F400T_MODEL_ID;
 

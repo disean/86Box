@@ -84,13 +84,20 @@
 
 /* ****************************************************************************/
 
+/* For some reason, this 4-byte only register is spread over 32 MB of MMIO space */
+#define VW_CO_GFX_INT_STATUS_IO_BASE                   0xCA000000
+#define VW_CO_GFX_INT_STATUS_IO_SIZE                   0x02000000
+#define VW_CO_GFX_INT_STATUS_IO_DECODE_MASK            0x00000004
+
+/* ****************************************************************************/
+
 typedef struct co_t
 {
     mem_mapping_t cpu_mapping;
     mem_mapping_t apic_mapping;
     mem_mapping_t mem_mapping;
     mem_mapping_t gfx_mapping;
-    mem_mapping_t gfx_mapping_ca;
+    mem_mapping_t gfx_mapping_interrupt_status;
     struct {
         uint32_t regs[VW_CO_CPU_REGS_SIZE / sizeof(uint32_t)];
         uint64_t last_timer_tsc;
@@ -103,6 +110,9 @@ typedef struct co_t
         uint32_t regs[VW_CO_MEM_REGS_SIZE / sizeof(uint32_t)];
         pc_timer_t countdown_timer;
     } mem;
+    struct {
+        uint32_t interrupt_status;
+    } gfx;
 } co_t;
 
 extern const device_t cobalt_device;

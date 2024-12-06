@@ -55,6 +55,8 @@ extern const device_t vid_device_sl;
 extern const device_t t1200_video_device;
 extern const device_t compaq_plasma_device;
 extern const device_t ps1_2011_device;
+extern const device_t sgivw320_device;
+extern const device_t sgivw540_device;
 
 const machine_filter_t machine_types[] = {
     { "None",                             MACHINE_TYPE_NONE       },
@@ -170,7 +172,8 @@ const machine_filter_t machine_chipsets[] = {
     { "VLSI VL82C480",              MACHINE_CHIPSET_VLSI_VL82C480       },
     { "VLSI VL82C481",              MACHINE_CHIPSET_VLSI_VL82C481       },
     { "VLSI VL82C486",              MACHINE_CHIPSET_VLSI_VL82C486       },
-    { "WD76C10",                    MACHINE_CHIPSET_WD76C10             }
+    { "WD76C10",                    MACHINE_CHIPSET_WD76C10             },
+    { "Cobalt Graphics",            MACHINE_CHIPSET_COBALT              },
 };
 
 /* Machines to add before machine freeze:
@@ -14968,7 +14971,7 @@ const machine_t machines[] = {
         .name = "[Cobalt] SGI Visual Workstation 320",
         .internal_name = "sgi320",
         .type = MACHINE_TYPE_SLOT1,
-        .chipset = MACHINE_CHIPSET_INTEL_440BX,// TODO
+        .chipset = MACHINE_CHIPSET_COBALT,
         .init = machine_at_sgivw320_init,
         .p1_handler = NULL,
         .gpio_handler = NULL,
@@ -14976,7 +14979,7 @@ const machine_t machines[] = {
         .gpio_acpi_handler = NULL,
         .cpu = {
             .package = CPU_PKG_SLOT1,
-            .block = CPU_BLOCK_NONE,
+            .block = CPU_BLOCK(CPU_PENTIUMPRO, CPU_CYRIX3S),
             .min_bus = 66666667,
             .max_bus = 100000000, /* FSB fixed at 100 MHz */
             .min_voltage = 1800,
@@ -14984,19 +14987,60 @@ const machine_t machines[] = {
             .min_multi = 1.5,
             .max_multi = 8
         },
-        .bus_flags = MACHINE_BUS_PCI, // ~MACHINE_AT,
+        .bus_flags = MACHINE_BUS_PCI | MACHINE_BUS_USB, // ~MACHINE_AT,
         .flags = MACHINE_PIIX4 | MACHINE_VIDEO_FIXED | MACHINE_NIC | MACHINE_SOUND,
         .ram = {
+            /* Max config: DIMM modules 6 x 2 = 1 GB (A and B banks) */
             .min = 128 * 1024,
-            .max = 1024 * 1024, /* Max config: DIMM modules 6 x 2 = 512 MB x 2 (A and B banks) */
-            .step = 128 * 1024 /* 128, 256, 384, 512, 640, 748, and 1024 (1 GB) */
+            .max = 1024 * 1024,
+            .step = 128 * 1024
         },
         .nvrmask = 511,
         .kbc_device = NULL,
         .kbc_p1 = 0xff,
         .gpio = 0xffffffff,
         .gpio_acpi = 0xffffffff,
-        .device = NULL,
+        .device = &sgivw320_device,
+        .fdc_device = NULL,
+        .sio_device = NULL,
+        .vid_device = NULL,
+        .snd_device = NULL,
+        .net_device = NULL
+    },
+    {
+        .name = "[Cobalt] SGI Visual Workstation 540",
+        .internal_name = "sgi540",
+        .type = MACHINE_TYPE_SLOT1,
+        .chipset = MACHINE_CHIPSET_COBALT,
+        .init = machine_at_sgivw540_init,
+        .p1_handler = NULL,
+        .gpio_handler = NULL,
+        .available_flag = MACHINE_AVAILABLE,
+        .gpio_acpi_handler = NULL,
+        .cpu = {
+            .package = CPU_PKG_SLOT1,
+            .block = CPU_BLOCK(CPU_PENTIUMPRO, CPU_CYRIX3S),
+            .min_bus = 66666667,
+            .max_bus = 100000000, /* FSB fixed at 100 MHz */
+            .min_voltage = 1800,
+            .max_voltage = 3500,
+            .min_multi = 1.5,
+            .max_multi = 8
+        },
+        .bus_flags = MACHINE_BUS_PCI | MACHINE_BUS_USB, // ~MACHINE_AT,
+        .flags = MACHINE_PIIX4 | MACHINE_VIDEO_FIXED | MACHINE_NIC | MACHINE_SOUND | MACHINE_SCSI,
+        .ram = {
+            /* Max config: DIMM modules 6 x 4 = 2 GB (banks A, B, C, D) */
+            .min = 128 * 1024,
+            .max = 2048 * 1024,
+            .step = 128 * 1024
+        },
+        .nvrmask = 511,
+        .kbc_device = NULL,
+        .kbc_p1 = 0xff,
+        .gpio = 0xffffffff,
+        .gpio_acpi = 0xffffffff,
+        .device = &sgivw540_device,
         .fdc_device = NULL,
         .sio_device = NULL,
         .vid_device = NULL,
