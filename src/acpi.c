@@ -2346,6 +2346,7 @@ acpi_reset(void *priv)
     acpi_t *dev = (acpi_t *) priv;
 
     memset(&dev->regs, 0x00, sizeof(acpi_regs_t));
+    // FIXME: The acpi code should always use machine_get_gpio_acpi_default()...
     /* PC Chips M773:
        - Bit 3: 80-conductor cable on unknown IDE channel (active low)
        - Bit 1: 80-conductor cable on unknown IDE channel (active low) */
@@ -2381,6 +2382,15 @@ acpi_reset(void *priv)
         dev->regs.gpi_val = 0xfff57fc1;
         if (!strcmp(machine_get_internal_name(), "ficva503a") || !strcmp(machine_get_internal_name(), "6via90ap"))
             dev->regs.gpi_val |= 0x00000004;
+    }
+
+    if (IS_IVC()) {
+        uint32_t gpiregs = machine_get_gpio_acpi_default();
+
+        dev->regs.gpireg[0] = (uint8_t)gpiregs;
+        dev->regs.gpireg[1] = (uint8_t)(gpiregs >> 8);
+        dev->regs.gpireg[2] = (uint8_t)(gpiregs >> 16);
+        dev->regs.gpireg[3] = (uint8_t)(gpiregs >> 24);
     }
 
     if (acpi_power_on) {

@@ -60,11 +60,19 @@
 /* Read the model ID. A0 = 1, A1 = 0 */
 #define FLASH_AUTOSELECT_ADDR_MODEL_ID          0x1
 
-#define FLASH_BLOCK_ERASE_ACCEPT_TIMEOUT  50.0
-#define FLASH_PROGRAM_TIME                100.0
-#define FLASH_ERASE_TIME_NO_DATA          150.0
-#define FLASH_BLOCK_ERASE_TIME            1000000.0 /* 1.0 sec */
-#define FLASH_CHIP_ERASE_TIME             4300000.0 /* 4.3 sec */
+#define FLASH_ACCESS_TIME_MICROSECONDS      0.075 // 75 ns
+
+#define FLASH_BLOCK_ERASE_ACCEPT_TIMEOUT    80.0
+
+#define FLASH_PROGRAM_TIME                  20.0
+
+#define FLASH_CHIP_ERASE_TIME               4300000 // 4.3 sec
+#define FLASH_PROGRAMMED_CHIP_ERASE_TIME    1200000
+#define FLASH_BOOT_BLOCK_ERASE_TIME         600000
+#define FLASH_PARAMETER_BLOCK_ERASE_TIME    500000
+#define FLASH_MAIN_BLOCK_32K_ERASE_TIME     900000
+#define FLASH_MAIN_BLOCK_64K_ERASE_TIME     1000000
+#define FLASH_NO_DATA_ERASE_TIME            150
 
 #define FLASH_MAX_BLOCKS   11
 
@@ -77,7 +85,6 @@
 /* ST */
 #define M29F400T_MANUFACTURER_ID   0x20
 
-/* Integrated Silicon Solution (ISSI) */
 #define M29F400T_MODEL_ID          0x00D5
 
 typedef enum BusCycleState {
@@ -98,11 +105,20 @@ typedef enum DeviceMode {
     M_MAX,
 } DeviceMode;
 
+typedef enum BlockType {
+    B_NONE = 0,
+    B_BOOT_BLOCK,
+    B_PARAMETER_BLOCK,
+    B_MAIN_BLOCK_32K,
+    B_MAIN_BLOCK_64K,
+} BlockType;
+
 typedef struct flash_block_t
 {
     uint32_t number;
     uint32_t start_addr;
     uint32_t end_addr;
+    BlockType type;
     uint8_t protection_status;
 } flash_block_t;
 
@@ -117,6 +133,8 @@ typedef struct flash_t
     uint8_t status_reg;
     uint8_t manufacturer_id;
     uint16_t model_id;
+
+    int access_cycles;
 
     uint32_t addr_decode_mask;
     uint32_t addr_select_shift;
@@ -136,6 +154,8 @@ typedef struct flash_t
 
     char flash_path[1024];
 } flash_t;
+
+extern double cpuclock;
 
 #ifdef ENABLE_M29F400_LOG
 int m29f400_do_log = ENABLE_M29F400_LOG;
@@ -159,23 +179,18 @@ static inline void
 m29f400_set_mode(flash_t *dev, DeviceMode mode)
 {
 #ifdef ENABLE_M29F400_LOG
-    static const char *mode_names[] = {
+    static const char *mode_names[M_MAX] = {
         "Read Array",
         "Auto Select",
         "Program",
         "Block Erase",
         "Chip Erase",
     };
-    const char *name;
 
-    if (mode < M_MAX) {
-        name = mode_names[mode];
-    } else {
-        name = "<Unknown>";
-    }
+    assert(mode < M_MAX);
 
     if (mode != dev->mode) {
-        m29f400_log("FLASH: Set %s mode\n", name);
+        m29f400_log("FLASH: Set %s mode\n", mode_names[mode]);
     }
 #endif
 
@@ -235,15 +250,39 @@ m29f400_cmd_complete_timer_callback(void *priv)
 }
 
 static bool
+m29f400_is_array_memory_programmed(const char *array, size_t size)
+{
+    /* Check that all bytes are zero */
+    return (array[0] == 0) && !memcmp(array, array + 1, size - 1);
+}
+
+static uint32_t
+m29f400_get_block_erase_time(flash_block_t *block)
+{
+    switch (block->type) {
+        case B_MAIN_BLOCK_32K:
+            return FLASH_MAIN_BLOCK_32K_ERASE_TIME;
+        case B_MAIN_BLOCK_64K:
+            return FLASH_MAIN_BLOCK_64K_ERASE_TIME;
+        case B_BOOT_BLOCK:
+            return FLASH_BOOT_BLOCK_ERASE_TIME;
+
+        default:
+            return FLASH_PARAMETER_BLOCK_ERASE_TIME;
+    }
+}
+
+static uint32_t
 m29f400_erase_blocks(flash_t *dev, int pattern)
 {
-    bool was_erased = false;
     uint32_t i;
+    uint32_t max_erase_time = 0;
 
     for (i = 0; i < FLASH_MAX_BLOCKS; ++i) {
         flash_block_t *block = &dev->block[i];
         void *block_start;
         size_t block_length;
+        uint32_t erase_time;
 
         if (!(dev->blocks_to_erase_bitmap & (1 << block->number))) {
             continue;
@@ -254,6 +293,10 @@ m29f400_erase_blocks(flash_t *dev, int pattern)
             continue;
         }
 
+        /* Multiple blocks are erased in parallel, thus pick the maximum time */
+        erase_time = m29f400_get_block_erase_time(block);
+        max_erase_time = MAX(max_erase_time, erase_time);
+
         m29f400_log("FLASH: Erase block #%lu %lX-%lX\n",
                     block->number,
                     block->start_addr,
@@ -263,37 +306,39 @@ m29f400_erase_blocks(flash_t *dev, int pattern)
         block_length = (block->end_addr - block->start_addr) + 1;
 
         memset(block_start, pattern, block_length);
-        was_erased = true;
     }
 
-    return was_erased;
+    if (max_erase_time == 0) {
+        /*
+         * If all of the selected blocks are protected,
+         * the operation will terminate within about 100us.
+         */
+        return FLASH_NO_DATA_ERASE_TIME;
+    } else if (dev->mode == M_CHIP_ERASE) {
+        /* It's faster to erase the preprogrammed array memory */
+        if (m29f400_is_array_memory_programmed(dev->array, M29F400T_FLASH_SIZE)) {
+            return FLASH_PROGRAMMED_CHIP_ERASE_TIME;
+        } else {
+            return FLASH_CHIP_ERASE_TIME;
+        }
+    } else {
+        return max_erase_time;
+    }
 }
 
 static void
 m29f400_erase_begin_timer_callback(void *priv)
 {
     flash_t *dev = priv;
-    double period;
-    bool was_erased = false;
+    uint32_t erase_time;
 
     /* This status bit is the same for Block Erase and Chip Erase */
     dev->status_reg |= STATUS_ERASE_TIMEOUT_EXPIRED;
 
     /* Finally, erase the blocks (fill with 0xFF) */
-    was_erased = m29f400_erase_blocks(dev, 0xFF);
+    erase_time = m29f400_erase_blocks(dev, 0xFF);
 
-    /*
-     * If all of the selected blocks are protected,
-     * the operation will terminate within about 100us.
-     */
-    if (!was_erased) {
-        period = FLASH_ERASE_TIME_NO_DATA;
-    } else if (dev->mode == M_BLOCK_ERASE) {
-        period = FLASH_BLOCK_ERASE_TIME;
-    } else {
-        period = FLASH_CHIP_ERASE_TIME;
-    }
-    timer_on_auto(&dev->cmd_complete_timer, period);
+    timer_on_auto(&dev->cmd_complete_timer, (double)erase_time);
 }
 
 static void
@@ -308,9 +353,15 @@ m29f400_check_for_erasure_abort(flash_t *dev)
 
         /*
          * Simulate the effect of erasure being interrupted.
-         * The software, therefore, has to check the change of memory array values again.
+         * The software, therefore, has to verify the memory array again.
          */
         m29f400_erase_blocks(dev, 0xCC);
+
+        /*
+         * Certainly, the erasure abort is unlikely to happen in reality,
+         * so this assertion failure will help us catch hidden bugs.
+         */
+        assert(false);
     }
 }
 
@@ -393,7 +444,7 @@ m29f400_accept_cmd(flash_t *dev, uint32_t addr, uint16_t val)
 
             /* Resume the erase operation */
             if (dev->status_reg & STATUS_ERASE_TIMEOUT_EXPIRED) {
-                timer_on_auto(&dev->cmd_complete_timer, FLASH_BLOCK_ERASE_TIME);
+                timer_on_auto(&dev->cmd_complete_timer, FLASH_PARAMETER_BLOCK_ERASE_TIME);
             } else {
                 timer_on_auto(&dev->erase_accept_timeout_timer, FLASH_BLOCK_ERASE_ACCEPT_TIMEOUT);
             }
@@ -431,7 +482,7 @@ m29f400_accept_cmd(flash_t *dev, uint32_t addr, uint16_t val)
                 current_value = dev->array[addr];
             }
 
-            /* The program command cannot change a '0' bit to a '1' */
+            /* The program command cannot change a bit set at '0' back to '1' */
             if (~current_value & val) {
                 m29f400_log("FLASH: Program error - the address %lX "
                             "was not previously erased %04X <> %04X\n",
@@ -455,7 +506,7 @@ m29f400_accept_cmd(flash_t *dev, uint32_t addr, uint16_t val)
             } else {
                 dev->array[addr] = val;
             }
-            m29f400_log("FLASH: Program %lX value %04X to %04X\n", addr, current_value, val);
+            m29f400_log("FLASH: Program %lX to %04X\n", addr, val);
 
 ProgramDone:
             timer_on_auto(&dev->cmd_complete_timer, FLASH_PROGRAM_TIME);
@@ -477,7 +528,7 @@ ProgramDone:
             /* Add block to the list */
             dev->blocks_to_erase_bitmap |= 1 << block->number;
 
-            /* Wait for a next block to erase */
+            /* Wait for a next block to erase (restart the timeout period) */
             timer_stop(&dev->erase_accept_timeout_timer);
             timer_on_auto(&dev->erase_accept_timeout_timer, FLASH_BLOCK_ERASE_ACCEPT_TIMEOUT);
             break;
@@ -600,8 +651,10 @@ m29f400_interpret_cmd_sequence(flash_t *dev, uint32_t addr, uint16_t val)
 
 /* Common write handler for 8- or 16-bit bus mode */
 static void
-m29f400_mmio_write(flash_t *dev, uint32_t addr, uint16_t val)
+m29f400_mmio_write_common(flash_t *dev, uint32_t addr, uint16_t val)
 {
+    cycles -= dev->access_cycles;
+
     addr &= dev->addr_decode_mask;
 
     m29f400_log("FLASH: [W16] [%lX] <-- %X\n", addr, val);
@@ -645,10 +698,12 @@ m29f400_mmio_write(flash_t *dev, uint32_t addr, uint16_t val)
 
 /* Common read handler for 8- or 16-bit bus mode */
 static uint16_t
-m29f400_mmio_read(flash_t *dev, uint32_t addr)
+m29f400_mmio_read_common(flash_t *dev, uint32_t addr)
 {
     flash_block_t *block;
     uint16_t ret;
+
+    cycles -= dev->access_cycles;
 
     addr &= dev->addr_decode_mask;
 
@@ -710,13 +765,13 @@ m29f400_mmio_read(flash_t *dev, uint32_t addr)
 static uint8_t
 m29f400_mmio_read8(uint32_t addr, void* priv)
 {
-    return m29f400_mmio_read(priv, addr);
+    return m29f400_mmio_read_common(priv, addr);
 }
 
 static void
 m29f400_mmio_write8(uint32_t addr, uint8_t val, void* priv)
 {
-    m29f400_mmio_write(priv, addr, val);
+    m29f400_mmio_write_common(priv, addr, val);
 }
 
 static uint16_t
@@ -727,10 +782,10 @@ m29f400_mmio_read16(uint32_t addr, void* priv)
 
     /* Split the read into two accesses when the device is in 8-bit bus mode */
     if (dev->in_16_bit_mode) {
-        ret = m29f400_mmio_read(dev, addr);
+        ret = m29f400_mmio_read_common(dev, addr);
     } else {
-        ret = m29f400_mmio_read(dev, addr);
-        ret |= ((uint16_t)m29f400_mmio_read(dev, addr)) << 16;
+        ret = m29f400_mmio_read_common(dev, addr);
+        ret |= ((uint16_t)m29f400_mmio_read_common(dev, addr)) << 16;
     }
 
     return ret;
@@ -743,10 +798,10 @@ m29f400_mmio_write16(uint32_t addr, uint16_t val, void* priv)
 
     /* Split the write into two accesses when the device is in 8-bit bus mode */
     if (dev->in_16_bit_mode) {
-        m29f400_mmio_write(dev, addr, val);
+        m29f400_mmio_write_common(dev, addr, val);
     } else {
-        m29f400_mmio_write(dev, addr, val & 0xFF);
-        m29f400_mmio_write(dev, addr + 1, val >> 8);
+        m29f400_mmio_write_common(dev, addr, val & 0xFF);
+        m29f400_mmio_write_common(dev, addr + 1, val >> 8);
     }
 }
 
@@ -790,6 +845,8 @@ m29f400_finish_init(flash_t *dev)
         block->number = i;
     }
 
+    dev->access_cycles = (cpuclock / (1000000.0 / FLASH_ACCESS_TIME_MICROSECONDS));
+
     dev->addr_decode_mask = M29F400T_FLASH_SIZE - 1;
 
     /*
@@ -802,7 +859,7 @@ m29f400_finish_init(flash_t *dev)
      * This means, that the software can only use a x8 address range to access a word.
      *
      *    Standard 8-bit mode          Standard 16-bit mode            16-bit mode on SGI 320/540
-     *                                   for a 16-bit CPU
+     *                                   for a 16-bit CPU                 for a 32-bit CPU
      * Read manufacturer ID:
      * *(uint8_t*)0x00              *(uint16_t*)0x00                *(uint16_t*)0x00
      *
@@ -818,8 +875,8 @@ m29f400_finish_init(flash_t *dev)
      * *(uint8_t*)0x5555 = 0x55     *(uint16_t*)0x2AAA = 0x0055     *(uint16_t*)0x5554 = 0x0055
      *
      * So we have two formulas to calculate the address:
-     * 0xAAAA >> 1 = 0x5555
-     * 0x5555 << 1 = 0xAAAA
+     * 0xAAAA >> 1 = 0x5555 // 8-bit  --> 16-bit for a 16-bit CPU
+     * 0x5555 << 1 = 0xAAAA // 16-bit --> 16-bit for a 32-bit CPU
      * and
      * 0x5555 >> 1 = 0x2AAA
      * 0x2AAA << 1 = 0x5554
@@ -874,44 +931,64 @@ m29f400_init(UNUSED(const device_t *info))
     timer_add(&dev->cmd_complete_timer, m29f400_cmd_complete_timer_callback, dev, 0);
 
     /* 64K MAIN BLOCK */
+    dev->block[0].type        = B_MAIN_BLOCK_64K;
     dev->block[0].start_addr  = 0x00000;
     dev->block[0].end_addr    = 0x0FFFF;
     /* 64K MAIN BLOCK */
+    dev->block[1].type        = B_MAIN_BLOCK_64K;
     dev->block[1].start_addr  = 0x10000;
     dev->block[1].end_addr    = 0x1FFFF;
     /* 64K MAIN BLOCK */
+    dev->block[2].type        = B_MAIN_BLOCK_64K;
     dev->block[2].start_addr  = 0x20000;
     dev->block[2].end_addr    = 0x2FFFF;
     /* 64K MAIN BLOCK */
+    dev->block[3].type        = B_MAIN_BLOCK_64K;
     dev->block[3].start_addr  = 0x30000;
     dev->block[3].end_addr    = 0x3FFFF;
     /* 64K MAIN BLOCK */
+    dev->block[4].type        = B_MAIN_BLOCK_64K;
     dev->block[4].start_addr  = 0x40000;
     dev->block[4].end_addr    = 0x4FFFF;
     /* 64K MAIN BLOCK */
+    dev->block[5].type        = B_MAIN_BLOCK_64K;
     dev->block[5].start_addr  = 0x50000;
     dev->block[5].end_addr    = 0x5FFFF;
     /* 64K MAIN BLOCK */
+    dev->block[6].type        = B_MAIN_BLOCK_64K;
     dev->block[6].start_addr  = 0x60000;
     dev->block[6].end_addr    = 0x6FFFF;
     /* 32K MAIN BLOCK */
+    dev->block[7].type        = B_MAIN_BLOCK_32K;
     dev->block[7].start_addr  = 0x70000;
     dev->block[7].end_addr    = 0x77FFF;
     /* 8K PARAMETER BLOCK */
+    dev->block[8].type        = B_PARAMETER_BLOCK;
     dev->block[8].start_addr  = 0x78000;
     dev->block[8].end_addr    = 0x79FFF;
     /* 8K PARAMETER BLOCK */
+    dev->block[9].type        = B_PARAMETER_BLOCK;
     dev->block[9].start_addr  = 0x7A000;
     dev->block[9].end_addr    = 0x7BFFF;
     /* 16K BOOT BLOCK */
+    dev->block[10].type       = B_BOOT_BLOCK;
     dev->block[10].start_addr = 0x7C000;
     dev->block[10].end_addr   = 0x7FFFF;
 
     dev->addr_AAAA_phys = 0xAAAA;
     dev->addr_5555_phys = 0x5555;
+
     dev->in_16_bit_mode = true;
     dev->manufacturer_id = M29F400T_MANUFACTURER_ID;
     dev->model_id = M29F400T_MODEL_ID;
+
+    /*
+     * On SGI 320/540 systems, the 16 KB boot block is write-protected,
+     * because it contains critical boot code.
+     */
+    if (IS_IVC()) {
+        dev->block[10].protection_status = FLASH_BLOCK_PROTECTED;
+    }
 
     m29f400_finish_init(dev);
 

@@ -33,10 +33,8 @@
 #define VW_CO_CPU_REG_40                    (0x40 / 4)
 #define VW_CO_CPU_REG_48                    (0x48 / 4)
 
-#define VW_CO_CPU_REV_A0   0xA0
 #define VW_CO_CPU_REV_A4   0xA4
 #define VW_CO_CPU_REV_A5   0xA5
-#define VW_CO_CPU_REV_A8   0xA8
 
 #define VW_CO_CPU_START_TIMER   0x8
 

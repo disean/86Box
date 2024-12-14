@@ -29,6 +29,7 @@
 #include <86box/mem.h>
 #include <86box/plat_unused.h>
 #include <86box/chipset.h>
+#include <86box/machine.h>
 
 #include <86box/sgivw/cobalt.h>
 
@@ -199,7 +200,11 @@ cobalt_cpu_reset_hard(co_t *dev)
 {
     memset(dev->cpu.regs, 0, sizeof(dev->cpu.regs));
 
-    dev->cpu.regs[VW_CO_CPU_REG_REVISION] = VW_CO_CPU_REV_A4;
+    if (IS_VW_540())
+        dev->cpu.regs[VW_CO_CPU_REG_REVISION] = VW_CO_CPU_REV_A5;
+    else
+        dev->cpu.regs[VW_CO_CPU_REG_REVISION] = VW_CO_CPU_REV_A4;
+
     dev->cpu.regs[VW_CO_CPU_REG_CTRL] = 0x00000019;
 }
 

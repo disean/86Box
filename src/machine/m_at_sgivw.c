@@ -6,7 +6,7 @@
  *
  *          This file is part of the 86Box distribution.
  *
- *          Implementation of SGI 320/540.
+ *          Implementation of SGI 320/540 Visual Workstations.
  *
  * Authors: Dmitry Borisov, <di.sean@protonmail.com>
  *
@@ -20,8 +20,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <wchar.h>
-#define HAVE_STDARG_H
 #include <86box/86box.h>
 #include <86box/mem.h>
 #include <86box/io.h>
@@ -29,25 +27,40 @@
 #include <86box/pci.h>
 #include <86box/device.h>
 #include <86box/chipset.h>
-#include <86box/keyboard.h>
 #include <86box/flash.h>
 #include <86box/sio.h>
 #include <86box/timer.h>
 #include <86box/thread.h>
 #include <86box/network.h>
-#include "cpu.h"
 #include <86box/machine.h>
 
-#define VW_GPI_DEFAULT                0x0000607E
+#define VW_PROM_PATH_0002    "roms/machines/sgivw/prom0002.bin"
+#define VW_PROM_PATH_0004    "roms/machines/sgivw/prom0004.bin"
+#define VW_PROM_PATH_0005    "roms/machines/sgivw/prom0005.bin"
+#define VW_PROM_PATH_0006    "roms/machines/sgivw/prom0006.bin"
+#define VW_PROM_PATH_1005    "roms/machines/sgivw/prom1005.bin"
 
-#define VW_GPI_JP_PASSWORD_ENABLED    0x00000000
-#define VW_GPI_JP_PASSWORD_DISABLED   0x00008000
+#define VW_PIIX_GPI_DEFAULT                0x0000607E
 
-#define VW_GPI_CPU_BUS_66MHZ          0x00000000
-#define VW_GPI_CPU_BUS_100MHZ         0x00010000
+#define VW_PIIX_GPI_JP_PASSWORD_DISABLED   0x00000000
+#define VW_PIIX_GPI_JP_PASSWORD_ENABLED    0x00008000
 
-#define VW_GPI_MODEL_320              0x00000000
-#define VW_GPI_MODEL_540              0x00040000
+#define VW_PIIX_GPI_CPU_BUS_66MHZ          0x00000000
+#define VW_PIIX_GPI_CPU_BUS_100MHZ         0x00010000
+
+#define VW_PIIX_GPI_MODEL_320              0x00000000
+#define VW_PIIX_GPI_MODEL_540              0x00040000
+
+#define VW_SIO_GPIO_DEFAULT                0xFF000080
+
+#define VW_SIO_GPIO_320_BOARD_REV_006A     0x0C
+#define VW_SIO_GPIO_320_BOARD_REV_006D     0x0F
+#define VW_SIO_GPIO_320_BOARD_REV_006F     0x11
+#define VW_SIO_GPIO_320_BOARD_REV_006H     0x13
+#define VW_SIO_GPIO_320_BOARD_REV_006J     0x15
+#define VW_SIO_GPIO_320_BOARD_REV_006K     0x16
+
+#define VW_SIO_GPIO_540_BOARD_REV_0031     0x21
 
 static const device_config_t sgi320_config[] = {
     // clang-format off
@@ -61,15 +74,15 @@ static const device_config_t sgi320_config[] = {
         .spinner = { 0 },
         .bios = {
             { .name = "1.0002", .internal_name = "0002", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom0002.bin", "" } },
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_0002, "" } },
             { .name = "1.0004", .internal_name = "0004", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom0004.bin", "" } },
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_0004, "" } },
             { .name = "1.0005", .internal_name = "0005", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom0005.bin", "" } },
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_0005, "" } },
             { .name = "1.0006", .internal_name = "0006", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom0006.bin", "" } },
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_0006, "" } },
             { .name = "1.1005", .internal_name = "1005", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom1005.bin", "" } },
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_1005, "" } },
             { .files_no = 0 }
         },
     },
@@ -78,34 +91,32 @@ static const device_config_t sgi320_config[] = {
         .description = "Motherboard Revision",
         .type = CONFIG_SELECTION,
         .default_string = "",
-        .default_int = 0x11,
+        .default_int = VW_SIO_GPIO_320_BOARD_REV_006F,
         .file_filter = "",
         .spinner = { 0 },
         .selection = {
-            { .description = "006A", .value = 0x0C },
-            { .description = "006D", .value = 0x0F },
-            { .description = "006F", .value = 0x11 },
-            { .description = "006H", .value = 0x13 },
-            { .description = "006J", .value = 0x15 },
-            { .description = "006K", .value = 0x16 },
-            { .description = ""                    }
+            { .description = "006A", .value = VW_SIO_GPIO_320_BOARD_REV_006A },
+            { .description = "006D", .value = VW_SIO_GPIO_320_BOARD_REV_006D },
+            { .description = "006F", .value = VW_SIO_GPIO_320_BOARD_REV_006F },
+            { .description = "006H", .value = VW_SIO_GPIO_320_BOARD_REV_006H },
+            { .description = "006J", .value = VW_SIO_GPIO_320_BOARD_REV_006J },
+            { .description = "006K", .value = VW_SIO_GPIO_320_BOARD_REV_006K },
         },
     },
     {
         .name = "jp1",
         .description = "Password Jumper",
-        .type = CONFIG_INT,
+        .type = CONFIG_SELECTION,
         .default_string = "",
         .default_int = 0,
-        .file_filter = "",
+        .file_filter = NULL,
         .spinner = { 0 },
         .selection = {
             { .description = "Disabled", .value = 0 },
             { .description = "Enabled",  .value = 1 },
-            { .description = ""                     }
         },
     },
-    { .name = "", .description = "", .type = CONFIG_END }
+    { .type = CONFIG_END }
     // clang-format on
 };
 
@@ -122,37 +133,35 @@ static const device_config_t sgi540_config[] = {
         .bios = {
             /* The VW 540 only started shipping with 1.0004 and higher PROM versions */
             { .name = "1.0004", .internal_name = "0004", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom0004.bin", "" } },
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_0004, "" } },
             { .name = "1.0005", .internal_name = "0005", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom0005.bin", "" } },
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_0005, "" } },
             { .name = "1.0006", .internal_name = "0006", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom0006.bin", "" } },
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_0006, "" } },
             { .name = "1.1005", .internal_name = "1005", .bios_type = BIOS_NORMAL,
-              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { "roms/machines/sgivw/prom1005.bin", "" } },
-            { .files_no = 0 }
+              .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_1005, "" } },
         },
     },
     {
         .name = "jp1",
         .description = "Password Jumper",
-        .type = CONFIG_INT,
+        .type = CONFIG_SELECTION,
         .default_string = "",
         .default_int = 0,
-        .file_filter = "",
+        .file_filter = NULL,
         .spinner = { 0 },
         .selection = {
             { .description = "Disabled", .value = 0 },
             { .description = "Enabled",  .value = 1 },
-            { .description = ""                     }
         },
     },
-    { .name = "", .description = "", .type = CONFIG_END }
+    { .type = CONFIG_END }
     // clang-format on
 };
 
 const device_t sgivw320_device = {
-    .name          = "Visual Workstation",
-    .internal_name = "sgivw_config",
+    .name          = "Visual Workstation 320",
+    .internal_name = "sgivw320_config",
     .flags         = 0,
     .local         = 0,
     .init          = NULL,
@@ -165,8 +174,8 @@ const device_t sgivw320_device = {
 };
 
 const device_t sgivw540_device = {
-    .name          = "Visual Workstation",
-    .internal_name = "sgivw_config",
+    .name          = "Visual Workstation 540",
+    .internal_name = "sgivw540_config",
     .flags         = 0,
     .local         = 0,
     .init          = NULL,
@@ -183,29 +192,31 @@ machine_sgivw_gpio_init(bool is_320)
 {
     uint32_t piix_gpio, sio_board_rev_gpio;
 
-    piix_gpio = VW_GPI_DEFAULT;
+    piix_gpio = VW_PIIX_GPI_DEFAULT;
 
     if (is_320)
-        piix_gpio |= VW_GPI_MODEL_320;
+        piix_gpio |= VW_PIIX_GPI_MODEL_320;
     else
-        piix_gpio |= VW_GPI_MODEL_540;
+        piix_gpio |= VW_PIIX_GPI_MODEL_540;
 
-    if (device_get_config_int("jp1"))
-        piix_gpio |= VW_GPI_JP_PASSWORD_ENABLED;
+    if (device_get_config_int("jp1") != 0)
+        piix_gpio |= VW_PIIX_GPI_JP_PASSWORD_ENABLED;
     else
-        piix_gpio |= VW_GPI_JP_PASSWORD_DISABLED;
+        piix_gpio |= VW_PIIX_GPI_JP_PASSWORD_DISABLED;
 
-    if (cpu_busspeed >= 100000000)
-        piix_gpio |= VW_GPI_CPU_BUS_100MHZ;
+    if (cpu_busspeed > 66666667)
+        piix_gpio |= VW_PIIX_GPI_CPU_BUS_100MHZ;
     else
-        piix_gpio |= VW_GPI_CPU_BUS_66MHZ;
+        piix_gpio |= VW_PIIX_GPI_CPU_BUS_66MHZ;
 
     machine_set_gpio_acpi_default(piix_gpio);
 
+    sio_board_rev_gpio = VW_SIO_GPIO_DEFAULT;
+
     if (is_320)
-        sio_board_rev_gpio = device_get_config_int("board_rev");
+        sio_board_rev_gpio |= device_get_config_int("board_rev");
     else
-        sio_board_rev_gpio = 2; // TODO
+        sio_board_rev_gpio |= VW_SIO_GPIO_540_BOARD_REV_0031;
 
     machine_set_gpio_default(sio_board_rev_gpio);
 }
@@ -283,6 +294,11 @@ machine_at_sgivw540_init(const machine_t *model)
     pci_register_bus_slot(1, 0x00, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 3.3V option slot #5
     pci_register_bus_slot(1, 0x01, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 3.3V option slot #6
     pci_register_bus_slot(1, 0x02, PCI_CARD_SCSI,   1, 2, 3, 4); // On-Board Qlogic 1080 SCSI
+
+    // TODO:
+    // - Add the Qlogic 1080 device (1077:1080) once implemented
+    // - SMBus address 0x29 - ADM1021 thermal sensor (0xFE = 0x41, 0xFF = 0x03)
+    // - SMBus addresses 0x51-0x54 (depends on CPU count) - CPU PIROM data
 
     return ret;
 }
