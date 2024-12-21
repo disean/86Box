@@ -59,6 +59,105 @@ i8255x_log(const char *fmt, ...)
 #endif
 
 static void
+i8255x_qs6612_phy_init_registers(nic_t *dev)
+{
+    /* SGI 320/540 systems: Quality Semiconductor QS6612 MII PHY */
+    static const uint16_t i8255x_qs6612_default_regs[32] = {
+        0x3000, 0x7809, 0x0181, 0x4401, 0x01E1, 0x0001, 0x0000, 0xFFFF,
+        0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+        0x0040, 0x0008, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF, 0xFFFF, 0x003E, 0xFFFF, 0x0010, 0x0000, 0x0DC0
+    };
+
+    memcpy(dev->mii_regs, i8255x_qs6612_default_regs, sizeof(i8255x_qs6612_default_regs));
+}
+
+static void
+i8255x_qs6612_phy_write(nic_t *dev, uint32_t mii_reg, uint16_t val)
+{
+    uint16_t write_bits_mask;
+
+    i8255x_log("I8255x [MII] [%lu] <-- %04X\n", mii_reg, val);
+
+    switch (mii_reg) {
+        case 0:
+            write_bits_mask = 0x3000; // 0x3D80
+            break;
+        case 2:
+        case 3:
+            write_bits_mask = 0xFFFF;
+            break;
+        case 4:
+            write_bits_mask = 0x23FF;
+            break;
+        case 17:
+            write_bits_mask = 0x1904;
+            break;
+        case 27:
+            write_bits_mask = 0x00FF;
+            break;
+        case 30:
+            write_bits_mask = 0x807F;
+            break;
+        case 31:
+            write_bits_mask = 0x2FFF;
+            break;
+
+        default:
+            write_bits_mask = 0;
+            break;
+    }
+
+    val &= write_bits_mask;
+    dev->mii_regs[mii_reg] = val | (dev->mii_regs[mii_reg] & ~write_bits_mask);
+}
+
+static uint16_t
+i8255x_qs6612_phy_read(nic_t *dev, uint32_t mii_reg)
+{
+    uint16_t ret;
+
+    ret = dev->mii_regs[mii_reg];
+
+    i8255x_log("I8255x [MII] [%lu] --> %04X\n", mii_reg, ret);
+
+    return ret;
+}
+
+// TODO: not accurate
+static void
+i8255x_mdio_write(nic_t *dev, uint32_t val)
+{
+    uint32_t phy_addr, phy_reg;
+    uint16_t phy_data;
+
+    if (!(val & 0x0C000000))
+        return;
+
+    phy_addr = (val >> 21) & 0x1F;
+
+    if (phy_addr != I8255X_PHY_ADDRESS)
+        return;
+
+    phy_reg = (val >> 16) & 0x1F;
+
+    if (val & 0x04000000) {
+        phy_data = val & 0xFFFF;
+
+        i8255x_qs6612_phy_write(dev, phy_reg, phy_data);
+    } else {
+        dev->mii_read_latch = i8255x_qs6612_phy_read(dev, phy_reg);
+    }
+}
+
+static uint32_t
+i8255x_mdio_read(nic_t *dev)
+{
+    // TODO: not accurate
+    return dev->mii_read_latch | 0x10000000;
+}
+
+static void
 i8255x_mmio_write8(uint32_t addr, uint8_t val, void* priv)
 {
     i8255x_log("I8255x [W08] [%lX] <-- %X\n", addr, val);
@@ -112,7 +211,39 @@ i8255x_mmio_read32(uint32_t addr, void* priv)
 static void
 i8255x_ioport_write32(uint16_t addr, uint32_t val, void *priv)
 {
+    nic_t *dev = priv;
+
+    addr &= I8255X_IO_DECODE_MASK;
+
+    assert((addr & 3) == 0);
+
     i8255x_log("I8255x [WI32] [%lX] <-- %X\n", addr, val);
+
+    switch (addr) {
+        // TODO: not accurate
+        case I8255X_REG_PORT: {
+            uint32_t dump_pointer = val & ~3;
+
+            if (val & I8255X_PORT_SELF_TEST) {
+                mem_writel_phys(dump_pointer, 0xFFFFFFFF);
+                mem_writel_phys(dump_pointer + 4, 0);
+
+                i8255x_log("I8255x Self-test passed\n");
+            } else {
+                i8255x_log("I8255x [WI32] [%lX] Not implemened\n", addr);
+            }
+            break;
+        }
+
+        case I8255X_REG_MDI_CONTROL: {
+            i8255x_mdio_write(dev, val);
+            break;
+        }
+
+        default:
+            i8255x_log("I8255x [WI32] [%lX] Not implemened\n", addr);
+            break;
+    }
 }
 
 static void
@@ -120,7 +251,24 @@ i8255x_ioport_write16(uint16_t addr, uint16_t val, void *priv)
 {
     nic_t *dev = priv;
 
+    addr &= I8255X_IO_DECODE_MASK;
+
+    assert((addr & 1) == 0);
+
     i8255x_log("I8255x [WI16] [%lX] <-- %X\n", addr, val);
+
+    switch (addr) {
+        case I8255X_REG_EEPROM_CONTROL:
+            nmc93cxx_eeprom_write(dev->eeprom,
+                                  ((val & I8255X_EEPROM_CS) != 0),
+                                  ((val & I8255X_EEPROM_SK) != 0),
+                                  ((val & I8255X_EEPROM_DI) != 0));
+            break;
+
+        default:
+            i8255x_log("I8255x [WI16] [%lX] Not implemened\n", addr);
+            break;
+    }
 }
 
 static void
@@ -132,9 +280,24 @@ i8255x_ioport_write8(uint16_t addr, uint8_t val, void *priv)
 static uint32_t
 i8255x_ioport_read32(uint16_t addr, void* priv)
 {
+    nic_t *dev = priv;
     uint32_t ret;
 
-    ret = 0;
+    addr &= I8255X_IO_DECODE_MASK;
+
+    assert((addr & 3) == 0);
+
+    switch (addr) {
+        case I8255X_REG_MDI_CONTROL: {
+            ret = i8255x_mdio_read(dev);
+            break;
+        }
+
+        default:
+            ret = 0;
+            i8255x_log("I8255x [RI32] [%lX] Not implemened\n", addr);
+            break;
+    }
 
     i8255x_log("I8255x [RI32] [%lX] --> %X\n", addr, ret);
     return ret;
@@ -146,7 +309,24 @@ i8255x_ioport_read16(uint16_t addr, void* priv)
     nic_t *dev = priv;
     uint16_t ret;
 
-    ret = 0;
+    addr &= I8255X_IO_DECODE_MASK;
+
+    assert((addr & 1) == 0);
+
+    switch (addr) {
+        case I8255X_REG_EEPROM_CONTROL: {
+            if (nmc93cxx_eeprom_read(dev->eeprom)) {
+                ret = I8255X_EEPROM_DO;
+            } else {
+                ret = 0;
+            }
+            break;
+        }
+
+        default:
+            ret = 0;
+            break;
+    }
 
     i8255x_log("I8255x [RI16] [%lX] --> %X\n", addr, ret);
     return ret;
@@ -368,6 +548,122 @@ i8255x_pci_read(UNUSED(int func), int addr, void *priv)
 }
 
 static void
+i8255x_create_permanent_mac_address(nic_t *dev, uint8_t *mac_addr)
+{
+    int mac;
+
+    /* See if we have a local MAC address configured */
+    mac = device_get_config_mac("mac", -1);
+
+    if (mac & 0xff000000) {
+        /* Generate new permanent MAC address */
+        mac_addr[3] = random_generate();
+        mac_addr[4] = random_generate();
+        mac_addr[5] = random_generate();
+        mac = (((int)mac_addr[3]) << 16);
+        mac |= (((int)mac_addr[4]) << 8);
+        mac |= ((int)mac_addr[5]);
+        device_set_config_mac("mac", mac);
+    } else {
+        mac_addr[3] = (mac >> 16) & 0xff;
+        mac_addr[4] = (mac >> 8) & 0xff;
+        mac_addr[5] = (mac & 0xff);
+    }
+
+    /* 08:00:69 (Silicon Graphics OUI) */
+    mac_addr[0] = 0x08;
+    mac_addr[1] = 0x00;
+    mac_addr[2] = 0x69;
+
+    i8255x_log("I8255x MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+               mac_addr[0],
+               mac_addr[1],
+               mac_addr[2],
+               mac_addr[3],
+               mac_addr[4],
+               mac_addr[5]);
+}
+
+static void
+i8255x_register_eeprom_device(const device_t *info, nic_t *dev)
+{
+    nmc93cxx_eeprom_params_t params;
+    char filename[1024] = { 0 };
+
+    params.nwords = I8255X_EEPROM_WORDS;
+    params.default_content = (uint16_t *)dev->eeprom_data;
+    params.filename = filename;
+
+    snprintf(filename,
+             sizeof(filename),
+             "nmc93cxx_eeprom_%s_%d.nvr",
+             info->internal_name,
+             device_get_instance());
+
+    dev->eeprom = device_add_params(&nmc93cxx_device, &params);
+}
+
+static uint16_t
+i8255x_get_eeprom_checksum(const uint16_t* buffer)
+{
+    uint32_t i;
+    uint16_t crc = 0;
+
+    for (i = 0; i < I8255X_EEPROM_WORDS - 1; i++) {
+        crc += buffer[i];
+    }
+
+    return 0xBABA - crc;
+}
+
+static void
+i8255x_create_eeprom_image(nic_t *dev)
+{
+    uint16_t crc;
+    uint8_t mac_addr[6];
+
+    i8255x_create_permanent_mac_address(dev, mac_addr);
+
+    /* Ethernet Individual Addres */
+    dev->eeprom_data[0] = mac_addr[0];
+    dev->eeprom_data[1] = mac_addr[1];
+    dev->eeprom_data[2] = mac_addr[2];
+    dev->eeprom_data[3] = mac_addr[3];
+    dev->eeprom_data[4] = mac_addr[4];
+    dev->eeprom_data[5] = mac_addr[5];
+
+    /* Connectors */
+    dev->eeprom_data[10] = 0x01;
+
+    /* Controller Type */
+    dev->eeprom_data[11] = 0x01;
+
+    /* Primary PHY Record */
+    dev->eeprom_data[12] = 0x01;
+    dev->eeprom_data[13] = 0x44;
+
+    /* Printed board assembly number */
+    dev->eeprom_data[16] = 0x34;
+    dev->eeprom_data[17] = 0x12;
+    dev->eeprom_data[18] = 0x78;
+    dev->eeprom_data[19] = 0x56;
+
+    /* Subsystem ID */
+    dev->eeprom_data[22] = 0x04;
+    dev->eeprom_data[23] = 0x00;
+
+    /* Subsystem Vendor ID */
+    dev->eeprom_data[24] = 0x86;
+    dev->eeprom_data[25] = 0x80;
+
+    crc = i8255x_get_eeprom_checksum((const uint16_t*)dev->eeprom_data);
+
+    /* Checksum */
+    dev->eeprom_data[126] = crc & 0xFF;
+    dev->eeprom_data[127] = (crc >> 8) & 0xFF;
+}
+
+static void
 i8255x_reset(void *priv)
 {
     nic_t *dev = priv;
@@ -391,6 +687,8 @@ i8255x_reset(void *priv)
     dev->pci_config[I8255X_PCI_CFG_INT_PIN] = PCI_INTA;
     dev->pci_config[I8255X_PCI_CFG_MIN_GRANT] = 8;
     dev->pci_config[I8255X_PCI_CFG_MAX_LATENCY] = 56;
+
+    i8255x_qs6612_phy_init_registers(dev);
 }
 
 static void *
@@ -430,7 +728,12 @@ i8255x_init(UNUSED(const device_t *info))
                  dev,
                  &dev->pci_slot);
 
+    i8255x_create_eeprom_image(dev);
+    i8255x_register_eeprom_device(info, dev);
+
     i8255x_reset(dev);
+
+    return dev;
 }
 
 static void
@@ -449,7 +752,7 @@ static const device_config_t i8255x_config[] = {
         .default_string = "",
         .default_int = -1
     },
-    { .name = "", .description = "", .type = CONFIG_END }
+    { .type = CONFIG_END }
 };
 
 const device_t intel_82557_device = {

@@ -70,11 +70,39 @@
 #define I8255X_PCI_IO_BAR_SIZE     0x20
 #define I8255X_PCI_FLASH_BAR_SIZE  0x100000
 
+#define I8255X_EEPROM_WORDS  64
+
+#define I8255X_IO_DECODE_MASK      (I8255X_PCI_IO_BAR_SIZE - 1)
+
+#define I8255X_PHY_ADDRESS  1
+
+#define I8255X_REG_SCB_STATUS        0x00
+#define I8255X_REG_SCB_COMMAND       0x02
+#define I8255X_REG_PORT              0x08
+#define I8255X_REG_EEPROM_CONTROL    0x0E
+#define I8255X_REG_MDI_CONTROL       0x10
+#define I8255X_REG_RX_DMA_BYTE_COUNT 0x14
+#define I8255X_REG_FLOW_CONTROL      0x18
+#define I8255X_REG_PMDR              0x1B
+#define I8255X_REG_GENERAL_CTRL      0x1C
+#define I8255X_REG_GENERAL_STATUS    0x1D
+
+#define I8255X_EEPROM_SK    0x0001
+#define I8255X_EEPROM_CS    0x0002
+#define I8255X_EEPROM_DI    0x0004
+#define I8255X_EEPROM_DO    0x0008
+
+#define I8255X_PORT_SELF_TEST    0x0000001
+
 typedef struct nic_t {
     mem_mapping_t mmio_bar_mapping;
     mem_mapping_t flash_bar_mapping;
     nmc93cxx_eeprom_t *eeprom;
     uint8_t pci_slot;
     uint8_t pci_config[256];
-    uint8_t eeprom_data[128];
+    uint8_t io_regs[I8255X_PCI_IO_BAR_SIZE];
+    uint16_t mii_regs[32];
+    uint32_t mii_read_latch;
+    uint8_t eeprom_data[I8255X_EEPROM_WORDS * 2];
 } nic_t;
+

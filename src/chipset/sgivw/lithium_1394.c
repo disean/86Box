@@ -28,6 +28,7 @@
 
 typedef struct li_1394_t {
     uint32_t regs[VW_LI_1394_REGS_SIZE / sizeof(uint32_t)];
+    uint8_t phy_regs[16];
     mem_mapping_t mmio_mapping;
 } li_1394_t;
 
@@ -48,6 +49,91 @@ lithium_1394_log(const char *fmt, ...)
 #else
 #    define lithium_1394_log(fmt, ...)
 #endif
+
+static void
+lithium_1394_phy_init_registers(li_1394_t *dev)
+{
+    static const uint8_t lithium_1394_default_phy_regs[16] = {
+        0x03, 0x3F, 0xE6, 0x40, 0x84, 0x00, 0x00, 0x00,
+        0xF8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+
+    memcpy(dev->phy_regs, lithium_1394_default_phy_regs, sizeof(lithium_1394_default_phy_regs));
+}
+
+static void
+lithium_1394_phy_control(li_1394_t *dev)
+{
+    uint32_t ctrl, phy_reg_addr;
+    uint8_t write_bits_mask, val;
+
+    ctrl = dev->regs[VW_LI_1394_REG_PHY_CTRL_0];
+
+    switch (ctrl & (VW_LI_1394_PHY_CTRL_WRITE_ACTION | VW_LI_1394_PHY_CTRL_READ_ACTION)) {
+        /* No PHY operation */
+        case 0:
+        case (VW_LI_1394_PHY_CTRL_WRITE_ACTION | VW_LI_1394_PHY_CTRL_READ_ACTION): {
+            /* Clear the done flag between PHY transfers */
+            ctrl &= ~VW_LI_1394_PHY_CTRL_READ_DONE;
+
+            dev->regs[VW_LI_1394_REG_PHY_CTRL_0] = ctrl;
+            return;
+        }
+
+        default:
+            break;
+    }
+
+    phy_reg_addr = ctrl & VW_LI_1394_PHY_CTRL_REG_ADDR_MASK;
+    phy_reg_addr >>= VW_LI_1394_PHY_CTRL_REG_ADDR_SHIFT;
+
+    /* Read operation */
+    if (ctrl & VW_LI_1394_PHY_CTRL_READ_ACTION) {
+        /* Transfer data from the PHY */
+        ctrl &= ~VW_LI_1394_PHY_CTRL_READ_DATA_MASK;
+        ctrl |= dev->phy_regs[phy_reg_addr] << VW_LI_1394_PHY_CTRL_READ_DATA_SHIFT;
+
+        /* Last read address */
+        ctrl &= ~VW_LI_1394_PHY_CTRL_READ_ADDR_MASK;
+        ctrl |= phy_reg_addr << VW_LI_1394_PHY_CTRL_READ_ADDR_SHIFT;
+
+        /* Emulation takes no time to complete */
+        ctrl |= VW_LI_1394_PHY_CTRL_READ_DONE;
+
+        dev->regs[VW_LI_1394_REG_PHY_CTRL_0] = ctrl;
+        return;
+    }
+
+    /* Write operation */
+    switch (phy_reg_addr) {
+        case 1:
+            write_bits_mask = 0xBF;
+            break;
+        case 4:
+            write_bits_mask = 0xC7;
+            break;
+        case 5:
+            write_bits_mask = 0x83;
+            break;
+        case 7:
+            write_bits_mask = 0xEF;
+            break;
+        case 8:
+            write_bits_mask = 0x01;
+            break;
+        case 9:
+            write_bits_mask = 0x10;
+            break;
+
+        default:
+            write_bits_mask = 0;
+            break;
+    }
+
+    val = ctrl & VW_LI_1394_PHY_CTRL_WRITE_DATA_MASK;
+    val &= write_bits_mask;
+    dev->phy_regs[phy_reg_addr] = val | (dev->phy_regs[phy_reg_addr] & ~write_bits_mask);
+}
 
 static void
 lithium_1394_mmio_write32(uint32_t addr, uint32_t val, void* priv)
@@ -75,10 +161,10 @@ lithium_1394_mmio_write32(uint32_t addr, uint32_t val, void* priv)
         case VW_LI_1394_REG_0D0:
             write_bits_mask = 0x800001FF;
             break;
-        case VW_LI_1394_REG_018:
-        case VW_LI_1394_REG_058:
-        case VW_LI_1394_REG_098:
-        case VW_LI_1394_REG_0D8:
+        case VW_LI_1394_REG_PHY_CTRL_0:
+        case VW_LI_1394_REG_PHY_CTRL_1:
+        case VW_LI_1394_REG_PHY_CTRL_2:
+        case VW_LI_1394_REG_PHY_CTRL_3:
             write_bits_mask = 0x0000CFFF;
             break;
         case VW_LI_1394_REG_020:
@@ -142,6 +228,19 @@ lithium_1394_mmio_write32(uint32_t addr, uint32_t val, void* priv)
 
     val &= write_bits_mask;
     dev->regs[addr] = val | (dev->regs[addr] & ~write_bits_mask);
+
+
+    switch (addr) {
+        case VW_LI_1394_REG_PHY_CTRL_0:
+        case VW_LI_1394_REG_PHY_CTRL_1:
+        case VW_LI_1394_REG_PHY_CTRL_2:
+        case VW_LI_1394_REG_PHY_CTRL_3:
+            lithium_1394_phy_control(dev);
+            break;
+
+        default:
+            break;
+    }
 }
 
 static uint32_t
@@ -165,22 +264,22 @@ static void
 lithium_1394_reset_hard(li_1394_t *dev)
 {
     dev->regs[VW_LI_1394_REG_000] = 0x1000FFF2;
-    dev->regs[VW_LI_1394_REG_018] = 0x04270000;
+    dev->regs[VW_LI_1394_REG_PHY_CTRL_0] = 0x04270000;
     dev->regs[VW_LI_1394_REG_030] = 0x80000000;
     dev->regs[VW_LI_1394_REG_038] = 0x80000000;
 
     dev->regs[VW_LI_1394_REG_040] = 0x1000FFF2;
-    dev->regs[VW_LI_1394_REG_058] = 0x04270000;
+    dev->regs[VW_LI_1394_REG_PHY_CTRL_1] = 0x04270000;
     dev->regs[VW_LI_1394_REG_070] = 0x80000000;
     dev->regs[VW_LI_1394_REG_078] = 0x80000000;
 
     dev->regs[VW_LI_1394_REG_080] = 0x1000FFF2;
-    dev->regs[VW_LI_1394_REG_098] = 0x04270000;
+    dev->regs[VW_LI_1394_REG_PHY_CTRL_2] = 0x04270000;
     dev->regs[VW_LI_1394_REG_0B0] = 0x80000000;
     dev->regs[VW_LI_1394_REG_0B8] = 0x80000000;
 
     dev->regs[VW_LI_1394_REG_0C0] = 0x1000FFF2;
-    dev->regs[VW_LI_1394_REG_0D8] = 0x04270000;
+    dev->regs[VW_LI_1394_REG_PHY_CTRL_3] = 0x04270000;
     dev->regs[VW_LI_1394_REG_0F0] = 0x80000000;
     dev->regs[VW_LI_1394_REG_0F8] = 0x80000000;
 
@@ -196,6 +295,8 @@ lithium_1394_reset_hard(li_1394_t *dev)
     dev->regs[VW_LI_1394_REG_680] = 0x00000001;
     dev->regs[VW_LI_1394_REG_700] = 0x00000001;
     dev->regs[VW_LI_1394_REG_780] = 0x00000001;
+
+    lithium_1394_phy_init_registers(dev);
 }
 
 static void
@@ -225,6 +326,8 @@ lithium_1394_init(const device_t *devinfo)
                     dev);
 
     lithium_1394_reset_hard(dev);
+
+    return dev;
 }
 
 const device_t lithium_1394_device = {

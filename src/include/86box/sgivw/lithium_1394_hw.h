@@ -21,7 +21,7 @@
 
 #define VW_LI_1394_REG_000                     (0x000 / 4)
 #define VW_LI_1394_REG_010                     (0x010 / 4)
-#define VW_LI_1394_REG_018                     (0x018 / 4)
+#define VW_LI_1394_REG_PHY_CTRL_0              (0x018 / 4)
 #define VW_LI_1394_REG_020                     (0x020 / 4)
 #define VW_LI_1394_REG_028                     (0x028 / 4)
 #define VW_LI_1394_REG_030                     (0x030 / 4)
@@ -29,7 +29,7 @@
 
 #define VW_LI_1394_REG_040                     (0x040 / 4)
 #define VW_LI_1394_REG_050                     (0x050 / 4)
-#define VW_LI_1394_REG_058                     (0x058 / 4)
+#define VW_LI_1394_REG_PHY_CTRL_1              (0x058 / 4)
 #define VW_LI_1394_REG_060                     (0x060 / 4)
 #define VW_LI_1394_REG_068                     (0x068 / 4)
 #define VW_LI_1394_REG_070                     (0x070 / 4)
@@ -37,7 +37,7 @@
 
 #define VW_LI_1394_REG_080                     (0x080 / 4)
 #define VW_LI_1394_REG_090                     (0x090 / 4)
-#define VW_LI_1394_REG_098                     (0x098 / 4)
+#define VW_LI_1394_REG_PHY_CTRL_2              (0x098 / 4)
 #define VW_LI_1394_REG_0A0                     (0x0A0 / 4)
 #define VW_LI_1394_REG_0A8                     (0x0A8 / 4)
 #define VW_LI_1394_REG_0B0                     (0x0B0 / 4)
@@ -45,7 +45,7 @@
 
 #define VW_LI_1394_REG_0C0                     (0x0C0 / 4)
 #define VW_LI_1394_REG_0D0                     (0x0D0 / 4)
-#define VW_LI_1394_REG_0D8                     (0x0D8 / 4)
+#define VW_LI_1394_REG_PHY_CTRL_3              (0x0D8 / 4)
 #define VW_LI_1394_REG_0E0                     (0x0E0 / 4)
 #define VW_LI_1394_REG_0E8                     (0x0E8 / 4)
 #define VW_LI_1394_REG_0F0                     (0x0F0 / 4)
@@ -80,3 +80,19 @@
 #define VW_LI_1394_REG_680                     (0x680 / 4)
 #define VW_LI_1394_REG_700                     (0x700 / 4)
 #define VW_LI_1394_REG_780                     (0x780 / 4)
+
+/*
+ * PHY Control register
+ */
+#define VW_LI_1394_PHY_CTRL_WRITE_DATA_MASK    0x000000FF
+#define VW_LI_1394_PHY_CTRL_REG_ADDR_MASK      0x00000F00
+#define VW_LI_1394_PHY_CTRL_WRITE_ACTION       0x00004000
+#define VW_LI_1394_PHY_CTRL_READ_ACTION        0x00008000
+#define VW_LI_1394_PHY_CTRL_READ_DATA_MASK     0x00FF0000
+#define VW_LI_1394_PHY_CTRL_READ_ADDR_MASK     0x0F000000
+#define VW_LI_1394_PHY_CTRL_READ_DONE          0x80000000
+
+#define VW_LI_1394_PHY_CTRL_REG_ADDR_SHIFT     8
+#define VW_LI_1394_PHY_CTRL_READ_DATA_SHIFT    16
+#define VW_LI_1394_PHY_CTRL_READ_ADDR_SHIFT    24
+
