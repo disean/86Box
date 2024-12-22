@@ -247,6 +247,7 @@ machine_at_sgivw_common_init(const machine_t *model, bool is_320)
     /* Lithium A bus #1 */
     pci_register_bus_slot(1, 0x03, PCI_CARD_NETWORK,     4, 0, 0, 0); // On-Board Intel 82557
 
+    device_add(&local_apic_device);
     device_add(&piix4e_device);
     device_add(&pc87307_device);
     device_add(&cobalt_chipset_device);

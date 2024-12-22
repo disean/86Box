@@ -27,6 +27,7 @@ add_executable(86Box
     random.c
     timer.c
     io.c
+    lapic.c
     acpi.c
     apm.c
     dma.c
