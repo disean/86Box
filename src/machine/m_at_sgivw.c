@@ -10,9 +10,7 @@
  *
  * Authors: Dmitry Borisov, <di.sean@protonmail.com>
  *
- *          Copyright 2024 Dmitry Borisov
- *
- * TODO: pci_register_bus_slot() The INT numbers are not accurate
+ *          Copyright 2024-2025 Dmitry Borisov
  */
 #include <stdarg.h>
 #include <stdint.h>
@@ -40,6 +38,11 @@
 #define VW_PROM_PATH_0006    "roms/machines/sgivw/prom0006.bin"
 #define VW_PROM_PATH_1005    "roms/machines/sgivw/prom1005.bin"
 
+#define VW_CFG_PROM_VER      "prom_upgrade"
+#define VW_CFG_BOARD_REV     "board_rev"
+#define VW_CFG_JP1           "jp1"
+#define VW_CFG_LCD           "flat_panel"
+
 #define VW_PIIX_GPI_DEFAULT                0x0000607E
 
 #define VW_PIIX_GPI_JP_PASSWORD_DISABLED   0x00000000
@@ -59,13 +62,15 @@
 #define VW_SIO_GPIO_320_BOARD_REV_006H     0x13
 #define VW_SIO_GPIO_320_BOARD_REV_006J     0x15
 #define VW_SIO_GPIO_320_BOARD_REV_006K     0x16
+#define VW_SIO_GPIO_320_BOARD_REV_117A     0x20
+#define VW_SIO_GPIO_320_BOARD_REV_117B     0x21
 
-#define VW_SIO_GPIO_540_BOARD_REV_0031     0x21
+#define VW_SIO_GPIO_540_BOARD_REV_001A     0x21
 
 static const device_config_t sgi320_config[] = {
     // clang-format off
     {
-        .name = "prom_upgrade",
+        .name = VW_CFG_PROM_VER,
         .description = "PROM Version",
         .type = CONFIG_BIOS,
         .default_string = "1005",
@@ -83,11 +88,10 @@ static const device_config_t sgi320_config[] = {
               .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_0006, "" } },
             { .name = "1.1005", .internal_name = "1005", .bios_type = BIOS_NORMAL,
               .files_no = 1, .local = 0, .size = 513 * 1024, .files = { VW_PROM_PATH_1005, "" } },
-            { .files_no = 0 }
         },
     },
     {
-        .name = "board_rev",
+        .name = VW_CFG_BOARD_REV,
         .description = "Motherboard Revision",
         .type = CONFIG_SELECTION,
         .default_string = "",
@@ -101,10 +105,12 @@ static const device_config_t sgi320_config[] = {
             { .description = "006H", .value = VW_SIO_GPIO_320_BOARD_REV_006H },
             { .description = "006J", .value = VW_SIO_GPIO_320_BOARD_REV_006J },
             { .description = "006K", .value = VW_SIO_GPIO_320_BOARD_REV_006K },
+            { .description = "117A", .value = VW_SIO_GPIO_320_BOARD_REV_117A },
+            { .description = "117B", .value = VW_SIO_GPIO_320_BOARD_REV_117B },
         },
     },
     {
-        .name = "jp1",
+        .name = VW_CFG_JP1,
         .description = "Password Jumper",
         .type = CONFIG_SELECTION,
         .default_string = "",
@@ -116,6 +122,19 @@ static const device_config_t sgi320_config[] = {
             { .description = "Enabled",  .value = 1 },
         },
     },
+    {
+        .name = VW_CFG_LCD,
+        .description = "SGI 1600SW",
+        .type = CONFIG_SELECTION,
+        .default_string = "",
+        .default_int = 0,
+        .file_filter = NULL,
+        .spinner = { 0 },
+        .selection = {
+            { .description = "Not attached", .value = 0 },
+            { .description = "Attached",     .value = 1 },
+        },
+    },
     { .type = CONFIG_END }
     // clang-format on
 };
@@ -123,7 +142,7 @@ static const device_config_t sgi320_config[] = {
 static const device_config_t sgi540_config[] = {
     // clang-format off
     {
-        .name = "prom_upgrade",
+        .name = VW_CFG_PROM_VER,
         .description = "PROM Version",
         .type = CONFIG_BIOS,
         .default_string = "1005",
@@ -143,7 +162,7 @@ static const device_config_t sgi540_config[] = {
         },
     },
     {
-        .name = "jp1",
+        .name = VW_CFG_JP1,
         .description = "Password Jumper",
         .type = CONFIG_SELECTION,
         .default_string = "",
@@ -155,13 +174,26 @@ static const device_config_t sgi540_config[] = {
             { .description = "Enabled",  .value = 1 },
         },
     },
+    {
+        .name = VW_CFG_LCD,
+        .description = "SGI 1600SW",
+        .type = CONFIG_SELECTION,
+        .default_string = "",
+        .default_int = 0,
+        .file_filter = NULL,
+        .spinner = { 0 },
+        .selection = {
+            { .description = "Not attached", .value = 0 },
+            { .description = "Attached",     .value = 1 },
+        },
+    },
     { .type = CONFIG_END }
     // clang-format on
 };
 
 const device_t sgivw320_device = {
     .name          = "Visual Workstation 320",
-    .internal_name = "sgivw320_config",
+    .internal_name = "vw320_config",
     .flags         = 0,
     .local         = 0,
     .init          = NULL,
@@ -175,7 +207,7 @@ const device_t sgivw320_device = {
 
 const device_t sgivw540_device = {
     .name          = "Visual Workstation 540",
-    .internal_name = "sgivw540_config",
+    .internal_name = "vw540_config",
     .flags         = 0,
     .local         = 0,
     .init          = NULL,
@@ -188,9 +220,11 @@ const device_t sgivw540_device = {
 };
 
 static void
-machine_sgivw_gpio_init(bool is_320)
+machine_sgivw_gpio_init(const machine_t *model, bool is_320)
 {
-    uint32_t piix_gpio, sio_board_rev_gpio;
+    uint32_t piix_gpio, sio_gpio;
+
+    device_context(model->device);
 
     piix_gpio = VW_PIIX_GPI_DEFAULT;
 
@@ -199,7 +233,7 @@ machine_sgivw_gpio_init(bool is_320)
     else
         piix_gpio |= VW_PIIX_GPI_MODEL_540;
 
-    if (device_get_config_int("jp1") != 0)
+    if (device_get_config_int(VW_CFG_JP1) != 0)
         piix_gpio |= VW_PIIX_GPI_JP_PASSWORD_ENABLED;
     else
         piix_gpio |= VW_PIIX_GPI_JP_PASSWORD_DISABLED;
@@ -211,14 +245,16 @@ machine_sgivw_gpio_init(bool is_320)
 
     machine_set_gpio_acpi_default(piix_gpio);
 
-    sio_board_rev_gpio = VW_SIO_GPIO_DEFAULT;
+    sio_gpio = VW_SIO_GPIO_DEFAULT;
 
     if (is_320)
-        sio_board_rev_gpio |= device_get_config_int("board_rev");
+        sio_gpio |= device_get_config_int(VW_CFG_BOARD_REV);
     else
-        sio_board_rev_gpio |= VW_SIO_GPIO_540_BOARD_REV_0031;
+        sio_gpio |= VW_SIO_GPIO_540_BOARD_REV_001A;
 
-    machine_set_gpio_default(sio_board_rev_gpio);
+    machine_set_gpio_default(sio_gpio);
+
+    device_context_restore();
 }
 
 static int
@@ -228,13 +264,14 @@ machine_at_sgivw_common_init(const machine_t *model, bool is_320)
     int ret;
 
     device_context(model->device);
-    prom_path = device_get_bios_file(model->device, device_get_config_bios("prom_upgrade"), 0);
+    prom_path = device_get_bios_file(model->device, device_get_config_bios(VW_CFG_PROM_VER), 0);
+    device_context_restore();
 
     ret = bios_load_linear(prom_path, 0x00080000, 512 * 1024, 0x200);
     if (bios_only || !ret)
         return ret;
 
-    machine_sgivw_gpio_init(is_320);
+    machine_sgivw_gpio_init(model, is_320);
 
     machine_at_common_init_ex(model, 2);
 
@@ -242,12 +279,11 @@ machine_at_sgivw_common_init(const machine_t *model, bool is_320)
     pci_init(PCI_CONFIG_TYPE_1);
 
     /* Lithium B bus #0 */
-    pci_register_bus_slot(0, 0x04, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4); // PIIX4E (FW82371EB)
+    pci_register_bus_slot(0, 0x04, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 0); // PIIX4E (FW82371EB)
 
     /* Lithium A bus #1 */
-    pci_register_bus_slot(1, 0x03, PCI_CARD_NETWORK,     4, 0, 0, 0); // On-Board Intel 82557
+    pci_register_bus_slot(1, 0x03, PCI_CARD_NETWORK,     3, 6, 5, 6); // On-Board Intel 82557
 
-    device_add(&local_apic_device);
     device_add(&piix4e_device);
     device_add(&pc87307_device);
     device_add(&cobalt_chipset_device);
@@ -267,11 +303,11 @@ machine_at_sgivw320_init(const machine_t *model)
         return ret;
 
     /* Lithium B bus #0 */
-    pci_register_bus_slot(0, 0x00, PCI_CARD_NORMAL, 1, 2, 3, 4); // 32-bit 3.3V option slot #1
+    pci_register_bus_slot(0, 0x00, PCI_CARD_NORMAL, 8, 5, 6, 7); // 32-bit 3.3V option slot #1
 
     /* Lithium A bus #1 */
-    pci_register_bus_slot(1, 0x00, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 3.3V option slot #2
-    pci_register_bus_slot(1, 0x01, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 3.3V option slot #3
+    pci_register_bus_slot(1, 0x00, PCI_CARD_NORMAL, 0, 5, 6, 5); // 64-bit 3.3V option slot #2
+    pci_register_bus_slot(1, 0x01, PCI_CARD_NORMAL, 1, 6, 5, 6); // 64-bit 3.3V option slot #3
 
     return ret;
 }
@@ -286,15 +322,15 @@ machine_at_sgivw540_init(const machine_t *model)
         return ret;
 
     /* Lithium B bus #0 */
-    pci_register_bus_slot(0, 0x00, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 5V option slot #1
-    pci_register_bus_slot(0, 0x01, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 5V option slot #2
-    pci_register_bus_slot(0, 0x02, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 5V option slot #3
-    pci_register_bus_slot(0, 0x03, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 5V option slot #4
+    pci_register_bus_slot(0, 0x00, PCI_CARD_NORMAL, 8,  5, 6, 7); // 64-bit 5V option slot #1
+    pci_register_bus_slot(0, 0x01, PCI_CARD_NORMAL, 9,  7, 8, 9); // 64-bit 5V option slot #2
+    pci_register_bus_slot(0, 0x02, PCI_CARD_NORMAL, 10, 6, 7, 8); // 64-bit 5V option slot #3
+    pci_register_bus_slot(0, 0x03, PCI_CARD_NORMAL, 11, 5, 6, 7); // 64-bit 5V option slot #4
 
     /* Lithium A bus #1 */
-    pci_register_bus_slot(1, 0x00, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 3.3V option slot #5
-    pci_register_bus_slot(1, 0x01, PCI_CARD_NORMAL, 1, 2, 3, 4); // 64-bit 3.3V option slot #6
-    pci_register_bus_slot(1, 0x02, PCI_CARD_SCSI,   1, 2, 3, 4); // On-Board Qlogic 1080 SCSI
+    pci_register_bus_slot(1, 0x00, PCI_CARD_NORMAL, 0, 5, 6, 5); // 64-bit 3.3V option slot #5
+    pci_register_bus_slot(1, 0x01, PCI_CARD_NORMAL, 1, 6, 5, 6); // 64-bit 3.3V option slot #6
+    pci_register_bus_slot(1, 0x02, PCI_CARD_SCSI,   2, 5, 6, 5); // On-Board Qlogic 1080 SCSI
 
     // TODO:
     // - Add the Qlogic 1080 device (1077:1080) once implemented
